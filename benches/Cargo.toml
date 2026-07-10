@@ -1,0 +1,70 @@
+[package]
+name = "axiom-benches"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+axiom-core = { workspace = true }
+axiom-encoding = { workspace = true }
+axiom-parser = { workspace = true }
+axiom-runtime = { workspace = true }
+axiom-incremental = { workspace = true }
+axiom-types = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+# Shared dataset generators (lib target `axiom_benches::generators`).
+[lib]
+name = "axiom_benches"
+path = "src/lib.rs"
+
+[[bench]]
+name = "parse"
+harness = false
+
+[[bench]]
+name = "format"
+harness = false
+
+[[bench]]
+name = "execute"
+harness = false
+
+[[bench]]
+name = "transactional"
+harness = false
+
+[[bench]]
+name = "encode"
+harness = false
+
+[[bench]]
+name = "graph"
+harness = false
+
+[[bench]]
+name = "obligations"
+harness = false
+
+[[bench]]
+name = "contradiction"
+harness = false
+
+[[bench]]
+name = "incremental"
+harness = false
+
+[[bench]]
+name = "explain"
+harness = false
+
+[[bench]]
+name = "replay"
+harness = false
+
+[[bench]]
+name = "conformance"
+harness = false

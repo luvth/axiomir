@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "axiom-ir"
+version = "0.1.0"
+description = "Thin, honest Python bridge to the Axiom IR CLI (pure stdlib)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["axiom", "ir", "proof-carrying", "reasoning", "verification"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+# No third-party runtime dependencies: the bridge is pure stdlib.
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+axiom-py = "axiom.cli_entry:main"
+
+[project.urls]
+Homepage = "https://github.com/axiom-ir/axiom"
+Repository = "https://github.com/axiom-ir/axiom"
+
+[tool.setuptools]
+packages = ["axiom"]

@@ -1,0 +1,16 @@
+[package]
+name = "axiom-sdk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Ergonomic Rust SDK for building and executing Axiom IR modules."
+
+[dependencies]
+axiom-types = { workspace = true }
+axiom-core = { workspace = true }
+axiom-encoding = { workspace = true }
+axiom-parser = { workspace = true }
+axiom-runtime = { workspace = true }

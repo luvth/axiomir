@@ -1,0 +1,43 @@
+[package]
+name = "axiom-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+# `cargo run` (stable smoke harness) without an explicit `--bin`.
+default-run = "axiom-fuzz-smoke"
+
+# Empty workspace table: fuzz/ is its own standalone crate, excluded from the
+# root Axiom workspace (see root Cargo.toml `exclude = ["fuzz"]`), so building
+# here never disturbs the main workspace build.
+[workspace]
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+libfuzzer-sys = "0.4"
+axiom-parser = { path = "../crates/axiom-parser" }
+axiom-runtime = { path = "../crates/axiom-runtime" }
+axiom-core = { path = "../crates/axiom-core" }
+axiom-types = { path = "../crates/axiom-types" }
+arbitrary = { version = "1", features = ["derive"] }
+
+# Stable smoke harness (run with: cd fuzz && cargo run).
+[[bin]]
+name = "axiom-fuzz-smoke"
+path = "src/main.rs"
+
+# Nightly cargo-fuzz targets (run with: rustup run nightly cargo +nightly fuzz run parse).
+[[bin]]
+name = "parse"
+path = "fuzz_targets/parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "runtime"
+path = "fuzz_targets/runtime.rs"
+test = false
+doc = false
+bench = false
