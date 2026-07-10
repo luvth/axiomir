@@ -1,0 +1,15 @@
+[package]
+name = "axiom-encoding"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Canonical encoding and domain-separated content addressing for Axiom IR."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+hex = "0.4"
+axiom-types.workspace = true
+thiserror.workspace = true

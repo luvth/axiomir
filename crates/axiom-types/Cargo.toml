@@ -1,0 +1,11 @@
+[package]
+name = "axiom-types"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Core typed value model for Axiom IR (no floating point in the normative numeric path)."
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
