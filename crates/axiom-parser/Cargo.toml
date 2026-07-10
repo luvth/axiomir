@@ -1,0 +1,17 @@
+[package]
+name = "axiom-parser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Lexer, parser, formatter, and AST for the Axiom textual language."
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+axiom-types.workspace = true
+axiom-encoding.workspace = true
+axiom-core.workspace = true
+
+[dev-dependencies]
+axiom-runtime.workspace = true
