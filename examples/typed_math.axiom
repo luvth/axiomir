@@ -1,0 +1,30 @@
+// Axiom IR example — typed quantity arithmetic with an assumption, a discharged
+// proof obligation, and verification.
+//
+// Run:
+//   axiom check examples/typed_math.axiom
+//   axiom run   examples/typed_math.axiom
+//   axiom verify examples/typed_math.axiom
+//   axiom explain examples/typed_math.axiom work
+
+module typed_math "1"
+
+evidence e_force "text/plain" "force = 10 N"
+evidence e_dist  "text/plain" "dist = 2 m"
+
+// Observations carry provenance (evidence) but are not verified on their own.
+observe force = q(10 "N") : quantity evidence [e_force]
+observe dist  = q(2 "m")  : quantity evidence [e_dist]
+
+// A scoped, challengeable assumption. Removing it invalidates dependents.
+assume coeff = q(0.5 "1") : quantity scope "adj_factor"
+
+// Derived claim with a dimensional-consistency obligation enforced at derive time.
+derive work = qmul(force, dist) : quantity
+verify work
+
+// A derived claim gated behind a mandatory proof obligation.
+derive adj = qmul(work, coeff) : quantity
+require numeric-bounds on adj
+discharge adj by e_force as satisfied
+verify adj

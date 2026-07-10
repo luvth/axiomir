@@ -1,0 +1,5 @@
+module valid_quarantine "1"
+assert a = 10 : rational
+assert b = 2 : rational
+derive q = div(a, b) : rational
+verify q

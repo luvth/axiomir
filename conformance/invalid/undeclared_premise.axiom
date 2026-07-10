@@ -1,0 +1,2 @@
+module invalid_undeclared "1"
+derive orphan = add(missing, other) : rational

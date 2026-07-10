@@ -1,0 +1,6 @@
+{
+  "kind": "valid",
+  "verified": ["q"],
+  "contradictions": 0,
+  "obligations": { "q": "satisfied" }
+}

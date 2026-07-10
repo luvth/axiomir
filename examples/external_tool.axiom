@@ -1,0 +1,19 @@
+// Axiom IR example — external, capability-gated tool call with a verified receipt.
+// The call requires the "tool:calculator" capability; when granted, the runtime
+// captures an immutable receipt. Replay reconstructs the output from that receipt
+// without re-invoking the tool.
+//
+// Run (capability + builtin tool executor required):
+//   axiom run   --cap tool:calculator --builtin-tool examples/external_tool.axiom
+//   axiom verify --cap tool:calculator --builtin-tool examples/external_tool.axiom
+// Offline replay (no live capability needed):
+//   axiom run --cap tool:calculator --builtin-tool examples/external_tool.axiom --emit-receipts receipts.json
+//   axiom replay receipts.json
+
+module external_tool "1"
+
+assert a = 2 : rational
+assert b = 3 : rational
+
+call sum = tool.calculator(a, b) : rational cap "tool:calculator"
+verify sum

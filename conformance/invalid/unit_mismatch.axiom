@@ -1,0 +1,4 @@
+module invalid_units "1"
+observe force = q(10 "N") : quantity
+observe time = q(3 "s") : quantity
+derive bad = qadd(force, time) : quantity

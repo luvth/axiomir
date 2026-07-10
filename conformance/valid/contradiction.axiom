@@ -1,0 +1,4 @@
+module valid_contradiction "1"
+observe cool = interval(10, 20) : interval
+observe warm = interval(25, 30) : interval
+contradict cool warm as disjoint-interval

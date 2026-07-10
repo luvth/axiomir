@@ -1,0 +1,22 @@
+// Axiom IR example — a base premise, a chain of derivations, and an independent
+// premise. Demonstrates the dependency-aware invalidation frontier:
+// invalidating `base` must invalidate exactly its dependents (a, b) and leave the
+// unrelated `indep` untouched.
+//
+// Run:
+//   axiom check examples/incremental.axiom
+//   axiom verify examples/incremental.axiom
+//   axiom invalidate examples/incremental.axiom base
+
+module incremental "1"
+
+assert base = 10 : rational
+assert other_in = 7 : rational
+
+derive a = add(base, base) : rational
+derive b = add(a, base) : rational
+derive indep = add(other_in, other_in) : rational
+
+verify a
+verify b
+verify indep

@@ -1,0 +1,7 @@
+module valid_context "1"
+observe low = q(15 "C") : quantity
+observe high = q(28 "C") : quantity
+contradict low high as disjoint-interval
+branch optimistic from root
+derive mid = qadd(low, high) : quantity ctx optimistic
+verify mid

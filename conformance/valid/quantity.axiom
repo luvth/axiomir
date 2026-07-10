@@ -1,0 +1,7 @@
+module valid_quantity "1"
+observe force = q(10 "N") : quantity evidence [e_force]
+observe dist = q(2 "m") : quantity evidence [e_dist]
+evidence e_force "text/plain" "force = 10 N"
+evidence e_dist "text/plain" "dist = 2 m"
+derive work = qmul(force, dist) : quantity
+verify work

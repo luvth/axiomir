@@ -1,0 +1,5 @@
+module valid_arithmetic "1"
+assert a = 2 : rational
+assert b = 3 : rational
+derive out = add(a, b) : rational
+verify out

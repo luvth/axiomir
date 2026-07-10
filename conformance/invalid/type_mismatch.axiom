@@ -1,0 +1,3 @@
+module invalid_type "1"
+assert a = true : bool
+derive out = add(a, a) : rational

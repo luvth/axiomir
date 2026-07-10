@@ -1,0 +1,9 @@
+module valid_invalidation "1"
+assert base = 10 : rational
+assert other_in = 7 : rational
+derive a = add(base, base) : rational
+derive b = add(a, base) : rational
+derive indep = add(other_in, other_in) : rational
+verify a
+verify b
+verify indep

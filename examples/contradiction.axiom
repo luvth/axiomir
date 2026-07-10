@@ -1,0 +1,14 @@
+// Axiom IR example — explicit contradiction witness over two disjoint intervals.
+// The conflicting claims are PRESERVED; neither branch is erased.
+//
+// Run:
+//   axiom check examples/contradiction.axiom
+//   axiom contradictions examples/contradiction.axiom
+
+module contradiction "1"
+
+observe cool = interval(10, 20) : interval
+observe warm = interval(25, 30) : interval
+
+// Records a contradiction witness (kind = disjoint-interval).
+contradict cool warm as disjoint-interval

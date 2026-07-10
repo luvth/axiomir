@@ -1,0 +1,5 @@
+module valid_replay "1"
+assert a = 2 : rational
+assert b = 3 : rational
+call sum = tool.calculator(a, b) : rational cap "tool:calculator"
+verify sum

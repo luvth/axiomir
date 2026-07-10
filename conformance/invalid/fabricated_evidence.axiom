@@ -1,0 +1,2 @@
+module invalid_evidence "1"
+assert x = 1 : rational evidence [ghost]

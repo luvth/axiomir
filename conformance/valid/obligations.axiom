@@ -1,0 +1,7 @@
+module valid_obligations "1"
+assert a = 10 : rational
+assert b = 2 : rational
+derive q = div(a, b) : rational
+require numeric-bounds on q
+discharge q by a as satisfied
+verify q

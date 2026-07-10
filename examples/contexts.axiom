@@ -1,0 +1,23 @@
+// Axiom IR example — a contradiction in the root context, plus a branch that
+// derives and verifies a local conclusion. Contexts are first-class, isolated
+// reasoning environments; the global conflict is left intact.
+//
+// Run:
+//   axiom check examples/contexts.axiom
+//   axiom contradictions examples/contexts.axiom
+//   axiom verify examples/contexts.axiom
+
+module contexts "1"
+
+observe low  = q(15 "C") : quantity
+observe high = q(28 "C") : quantity
+
+// Root-level conflict witness.
+contradict low high as disjoint-interval
+
+// Branch an optimistic context from root.
+branch optimistic from root
+
+// Context-local derive: the `ctx` clause scopes the derivation to the branch.
+derive mid = qadd(low, high) : quantity ctx optimistic
+verify mid

@@ -1,0 +1,5 @@
+module valid_assumption "1"
+assert base = 5 : rational
+assume coeff = 2 : rational scope "factor"
+derive scaled = mul(base, coeff) : rational
+verify scaled

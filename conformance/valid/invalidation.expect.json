@@ -1,0 +1,10 @@
+{
+  "kind": "valid",
+  "verified": ["a", "b", "indep"],
+  "contradictions": 0,
+  "invalidation": {
+    "root": "base",
+    "invalidated": ["a", "b"],
+    "preserved": ["indep"]
+  }
+}
