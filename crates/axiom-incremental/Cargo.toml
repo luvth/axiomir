@@ -1,0 +1,17 @@
+[package]
+name = "axiom-incremental"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Dependency-aware incremental invalidation and recomputation for Axiom IR."
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+axiom-types.workspace = true
+axiom-encoding.workspace = true
+axiom-core.workspace = true
+axiom-parser.workspace = true
+axiom-runtime.workspace = true
+indexmap = { version = "2", features = ["serde"] }
