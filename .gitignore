@@ -1,0 +1,19 @@
+# Build artifacts
+/target
+**/target
+fuzz/target
+
+# Editor / OS noise
+*.DS_Store
+**/*.DS_Store
+*.swp
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+venv/
+
+# Local receipts / logs
+*.receipts.json
