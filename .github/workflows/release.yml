@@ -1,13 +1,14 @@
 name: Release
 
-# Builds cross-platform `axiom` binaries and publishes a GitHub Release with
-# checksummed assets on every version tag. Tests + conformance must be green
-# before any asset is uploaded.
+# Builds cross-platform `axiom` binaries and publishes them as assets on the
+# GitHub Release for every version tag. The gating checks (fmt, clippy, test,
+# conformance) must be green before any asset is uploaded.
 
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -25,18 +26,19 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            bin: axiom
+            ext: ""
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            bin: axiom.exe
+            ext: ".exe"
           - os: macos-latest
             target: x86_64-apple-darwin
-            bin: axiom
+            ext: ""
           - os: macos-latest
             target: aarch64-apple-darwin
-            bin: axiom
+            ext: ""
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Install stable Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -68,20 +70,18 @@ jobs:
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }} -p axiom-cli
 
-      - name: Package + checksum
+      - name: Package and checksum
         shell: bash
         run: |
-          cd target/${{ matrix.target }}/release
-          asset="axiom-${{ matrix.target }}"
-          if [ "${{ matrix.bin }}" = "axiom.exe" ]; then
-            cp axiom.exe "$asset.exe"
-            sha256sum "$asset.exe" > "$asset.exe.sha256"
-            echo "ASSET=$asset.exe" >> "$GITHUB_ENV"
+          cd "target/${{ matrix.target }}/release"
+          asset="axiom-${{ matrix.target }}${{ matrix.ext }}"
+          cp "axiom${{ matrix.ext }}" "$asset"
+          if [ "${{ matrix.ext }}" = ".exe" ]; then
+            sha256sum "$asset" > "$asset.sha256"
           else
-            cp axiom "$asset"
             shasum -a 256 "$asset" > "$asset.sha256"
-            echo "ASSET=$asset" >> "$GITHUB_ENV"
           fi
+          echo "ASSET=$asset" >> "$GITHUB_ENV"
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
