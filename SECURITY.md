@@ -9,12 +9,6 @@ obligations, a receipt-integrity bypass, a capability-escalation, or a denial-of
 malformed input), please **report it to the maintainers via a private channel; do not open
 public issues for vulnerabilities.**
 
-A placeholder reporting path is:
-
-- Email the maintainers at **security@axiom-ir.example** (replace with the real address once
-  published), or
-- Use GitHub's private vulnerability reporting if enabled for this repository.
-
 Please include:
 
 - A description of the impact and the violated invariant (ideally INV-VERIFY or INV-MINIMALITY).
@@ -22,7 +16,7 @@ Please include:
 - The expected vs. observed behavior.
 
 We will acknowledge receipt, work on a fix, and coordinate disclosure. Axiom IR is currently at
-`0.1.0` (pre-stable); treat all interfaces as subject to change.
+`0.2.0` (pre-stable); treat all interfaces as subject to change.
 
 ## Threat model
 
@@ -50,4 +44,4 @@ Key design commitments:
 
 ## Supported versions
 
-Only the latest `0.1.x` release line is supported during the pre-stable period.
+Only the latest `0.2.x` release line is supported during the pre-stable period.
