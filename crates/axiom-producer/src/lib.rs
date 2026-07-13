@@ -111,7 +111,7 @@ impl ReasoningPlan {
     /// registered operation's output type. Validation uses the shared operation
     /// registry so the producer cannot silently drift from the runtime type
     /// system.
-    pub fn produce(&self) -> Result<String, String> {
+    pub fn produce(&self) -> Result<String, ProduceError> {
         produce(self)
     }
 }
@@ -193,8 +193,10 @@ fn type_name(t: &axiom_core::Type) -> String {
 ///
 /// Operation output types come from the operation registry (never from a
 /// `op.starts_with('q')` heuristic). The producer rejects unknown operations,
-/// wrong arity, and declared output types that disagree with the registry.
-pub fn produce(plan: &ReasoningPlan) -> Result<String, String> {
+/// wrong arity, and declared output types that disagree with the registry. An
+/// unqualified op (e.g. `qmul`) resolves to its `core.` namespaced definition,
+/// matching the runtime's `resolve_op`.
+pub fn produce(plan: &ReasoningPlan) -> Result<String, ProduceError> {
     let reg = registry();
     let mut out = String::new();
     let _ = writeln!(out, "module {} \"1\"", sanitize_ident(&plan.module_name));
@@ -243,16 +245,20 @@ pub fn produce(plan: &ReasoningPlan) -> Result<String, String> {
 
     // 4. Derived steps.
     for s in &plan.steps {
+        let op_name = if reg.contains_key(&s.op) {
+            s.op.clone()
+        } else {
+            format!("core.{}", s.op)
+        };
         let def = reg
-            .get(&s.op)
-            .ok_or_else(|| ProduceError::UnknownOp(s.op.clone()).to_string())?;
+            .get(&op_name)
+            .ok_or_else(|| ProduceError::UnknownOp(s.op.clone()))?;
         if def.inputs.len() != s.inputs.len() {
             return Err(ProduceError::Arity {
                 op: s.op.clone(),
                 expected: def.inputs.len(),
                 got: s.inputs.len(),
-            }
-            .to_string());
+            });
         }
         let declared = type_name(&def.output);
         if s.ty.as_deref() != Some(declared.as_str()) && s.ty.is_some() {
@@ -260,8 +266,7 @@ pub fn produce(plan: &ReasoningPlan) -> Result<String, String> {
                 op: s.op.clone(),
                 expected: declared.clone(),
                 got: s.ty.clone().unwrap(),
-            }
-            .to_string());
+            });
         }
         let inputs = s
             .inputs
@@ -304,15 +309,7 @@ pub fn produce(plan: &ReasoningPlan) -> Result<String, String> {
 /// extraction pipeline would emit) and produce Axiom source.
 pub fn produce_from_json(json: &str) -> Result<String, ProduceError> {
     let plan: ReasoningPlan = serde_json::from_str(json)?;
-    produce(&plan).map_err(ProduceError::from)
-}
-
-impl From<String> for ProduceError {
-    fn from(s: String) -> Self {
-        // The only `String` we create today is an UnknownOp/Arity/OutputType
-        // error; surface it generically.
-        ProduceError::UnknownOp(s)
-    }
+    produce(&plan)
 }
 
 /// Sanitize an identifier so it is a valid Axiom label (alphanumeric + `_`).

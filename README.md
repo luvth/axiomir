@@ -1,5 +1,10 @@
 # Axiom IR
 
+![Tests](https://img.shields.io/badge/tests-93%2F93-passing-brightgreen)
+![Conformance](https://img.shields.io/badge/conformance-17%2F17-passing-brightgreen)
+![License](https://img.shields.io/badge/license-Apache--2.0-blue)
+![Release](https://img.shields.io/badge/release-v0.2.0-blue)
+
 Axiom IR is a universal, proof-carrying intermediate representation for machine reasoning.
 It is a portable, executable, verifiable, serializable, and explainable format for reasoning
 programs — an IR for machine reasoning in the same way that LLVM is an IR for compilers. A
@@ -147,7 +152,7 @@ claim 'work' (claim.1....)
 # Build and run the full test suite
 cargo test --workspace
 
-# Run all seven required demonstrations (typed math, contradictions, replay, …)
+# Run all eight demonstrations (typed math, contradictions, replay, producer, …)
 cargo run --release -p axiom-cli -- demo all
 
 # Run the conformance suite against the fixtures in conformance/

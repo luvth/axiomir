@@ -65,9 +65,19 @@ enum Command {
         #[arg(long, default_value = "conformance")]
         fixtures: String,
     },
+    /// Generate an Axiom IR module from a structured reasoning plan (JSON).
+    /// Reads the plan from --plan or from stdin; writes to --output or stdout.
+    Produce {
+        /// JSON reasoning plan (ReasoningPlan). Read from stdin if omitted.
+        #[arg(long = "plan")]
+        plan: Option<String>,
+        /// Write the generated module to this path instead of stdout.
+        #[arg(long)]
+        output: Option<String>,
+    },
     /// Environment and self-test.
     Doctor,
-    /// Run a demonstration (1..7 or all).
+    /// Run a demonstration (1..8 or all).
     Demo { which: String },
 }
 
@@ -123,6 +133,7 @@ fn dispatch(cli: Cli) -> Outcome {
             Outcome { exit, human, json }
         }
         Command::Doctor => commands::doctor(),
+        Command::Produce { plan, output } => commands::produce(plan, output),
         Command::Demo { which } => axiom_cli::demos::run_demo(&which),
     }
 }

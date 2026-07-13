@@ -1,4 +1,4 @@
-//! The seven required demonstrations. Each `demo_*` function drives the real
+//! The eight demonstrations. Each `demo_*` function drives the real
 //! runtime and asserts the analytical outcome the demo is required to show.
 //! `run_demo` dispatches by name; `all` runs every demo and aggregates.
 

@@ -5,6 +5,7 @@ use axiom_core::registry::{builtin_operations, BuiltinExecutor};
 use axiom_core::{ClaimStatus, Id, Module, Receipt, Value};
 use axiom_incremental::invalidate_and_recompute;
 use axiom_parser::{parse_module, Diagnostic};
+use axiom_producer::produce_from_json;
 use axiom_runtime::Runtime;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
@@ -293,11 +294,14 @@ pub fn run(
             replay: None,
         },
     ) {
-        Ok((_src, rt)) => {
+        Ok((src, rt)) => {
             let (h, j) = module_summary(&rt);
             if let Some(out) = emit_receipts {
                 let log = ReceiptLog {
-                    source: rt.module.name.clone(),
+                    // The receipt log must carry the full module source so that
+                    // `axiom replay` can reconstruct the module without the live
+                    // runtime (the replay contract documented in the README).
+                    source: src,
                     receipts: rt.module.receipts.values().cloned().collect(),
                 };
                 match fs::write(out, serde_json::to_string_pretty(&log).unwrap()) {
@@ -840,6 +844,42 @@ pub fn inspect(path: &str, node_label: &str) -> Outcome {
             }
         }
         Err(o) => o,
+    }
+}
+
+pub fn produce(plan: Option<String>, output: Option<String>) -> Outcome {
+    let source = match plan {
+        Some(s) => s,
+        None => {
+            use std::io::Read;
+            let mut buf = String::new();
+            if std::io::stdin().read_to_string(&mut buf).is_err() {
+                return Outcome::fail(
+                    "cannot read reasoning plan from stdin".to_string(),
+                    Json::Null,
+                );
+            }
+            buf
+        }
+    };
+    match produce_from_json(&source) {
+        Ok(module) => {
+            if let Some(path) = output {
+                match fs::write(&path, &module) {
+                    Ok(()) => Outcome::ok(
+                        format!("produced module written to {}", path),
+                        serde_json::json!({ "path": path }),
+                    ),
+                    Err(e) => Outcome::fail(format!("cannot write {}: {}", path, e), Json::Null),
+                }
+            } else {
+                Outcome::ok(
+                    module.clone(),
+                    serde_json::json!({ "ok": true, "module": module }),
+                )
+            }
+        }
+        Err(e) => Outcome::fail(format!("produce error: {}", e), Json::Null),
     }
 }
 

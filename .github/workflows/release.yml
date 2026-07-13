@@ -1,0 +1,91 @@
+name: Release
+
+# Builds cross-platform `axiom` binaries and publishes a GitHub Release with
+# checksummed assets on every version tag. Tests + conformance must be green
+# before any asset is uploaded.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin: axiom
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: axiom.exe
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            bin: axiom
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bin: axiom
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --target ${{ matrix.target }} -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --target ${{ matrix.target }}
+
+      - name: Conformance suite
+        run: cargo run --target ${{ matrix.target }} -p axiom-cli -- conform
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }} -p axiom-cli
+
+      - name: Package + checksum
+        shell: bash
+        run: |
+          cd target/${{ matrix.target }}/release
+          asset="axiom-${{ matrix.target }}"
+          if [ "${{ matrix.bin }}" = "axiom.exe" ]; then
+            cp axiom.exe "$asset.exe"
+            sha256sum "$asset.exe" > "$asset.exe.sha256"
+            echo "ASSET=$asset.exe" >> "$GITHUB_ENV"
+          else
+            cp axiom "$asset"
+            shasum -a 256 "$asset" > "$asset.sha256"
+            echo "ASSET=$asset" >> "$GITHUB_ENV"
+          fi
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/${{ matrix.target }}/release/${{ env.ASSET }}
+            target/${{ matrix.target }}/release/${{ env.ASSET }}.sha256
