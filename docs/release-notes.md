@@ -79,14 +79,16 @@ python python/axiom_checker/run_conformance.py
 
 ## Checksums
 
-Release assets are SHA-256 checksummed. Local macOS (Apple Silicon) binary:
+Every released binary ships with a sidecar `*.sha256` file (SHA-256). Verify a
+download before trusting it, e.g.:
 
-```
-SHA_MACOS_ARM64  axiom
+```sh
+sha256sum -c axiom-aarch64-apple-darwin.sha256     # Linux / macOS
+certutil -hashfile axiom-x86_64-pc-windows-msvc.exe sha256   # Windows
 ```
 
 CI (`.github/workflows/release.yml`) cross-builds Linux (x86_64), Windows
-(x86_64), and macOS (x86_64 + Apple Silicon) on every tag and attaches
+(x86_64), and macOS (x86_64 + Apple Silicon) on every tag and attaches the
 checksummed binaries to the release.
 
 ## License
