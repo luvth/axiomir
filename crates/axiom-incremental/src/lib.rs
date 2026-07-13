@@ -7,7 +7,7 @@
 //! preserved untouched.
 
 use axiom_core::registry::OpExecutor;
-use axiom_core::{ClaimStatus, Event, Id, Module};
+use axiom_core::{ClaimStatus, Event, Id, Module, TrustRoot};
 use axiom_runtime::Runtime;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -89,17 +89,24 @@ pub fn reverse_dependents(m: &Module) -> HashMap<Id, Vec<Id>> {
 }
 
 /// The core operation: invalidate everything that depends on `changed`, then
-/// recompute eligible derivations. `changed` may be a claim, evidence, or
-/// assumption id; claims referencing it are seeded into the frontier.
+/// recompute eligible derivations. `changed` may be a claim, evidence,
+/// assumption, or receipt id; claims referencing it are seeded into the
+/// frontier. `trust_roots` are required so that any receipted derivation
+/// re-resolved during recomputation is re-authenticated.
 pub fn invalidate_and_recompute(
     m: &mut Module,
     changed: &Id,
     executor: &dyn OpExecutor,
+    trust_roots: &[TrustRoot],
 ) -> InvalidationReport {
     let rev = reverse_dependents(m);
 
-    // BFS the affected claim set from `changed`.
+    // BFS the affected claim set from `changed`. If `changed` is an assumption,
+    // its introduced claim is also invalidated (retracting the assumption).
     let mut affected: HashSet<Id> = HashSet::new();
+    if let Some(a) = m.assumptions.get(changed) {
+        affected.insert(a.claim.clone());
+    }
     if m.claims.contains_key(changed) {
         affected.insert(changed.clone());
     }
@@ -207,6 +214,7 @@ pub fn invalidate_and_recompute(
                         &d.output_label,
                         d.receipt.clone(),
                         executor,
+                        trust_roots,
                     );
                     let _ = m.verify(cid.clone());
                     if let Some(c) = m.claims.get(&cid) {
@@ -252,7 +260,11 @@ pub fn invalidate_and_recompute(
 /// against incremental recomputation). Preserves each derivation's original
 /// context so node identities are stable.
 #[allow(clippy::type_complexity)]
-pub fn full_recompute(m: &mut Module, executor: &dyn OpExecutor) -> usize {
+pub fn full_recompute(
+    m: &mut Module,
+    executor: &dyn OpExecutor,
+    trust_roots: &[TrustRoot],
+) -> usize {
     let derivations: Vec<(String, String, Vec<Id>, Id, String, Option<Id>, Id)> = m
         .derivations
         .values()
@@ -276,17 +288,31 @@ pub fn full_recompute(m: &mut Module, executor: &dyn OpExecutor) -> usize {
         .collect();
     let mut n = 0;
     for (name, ver, inputs, _out, label, receipt, ctx) in derivations {
-        let _ = m.derive(&name, &ver, &inputs, Some(ctx), &label, receipt, executor);
+        let _ = m.derive(
+            &name,
+            &ver,
+            &inputs,
+            Some(ctx),
+            &label,
+            receipt,
+            executor,
+            trust_roots,
+        );
         n += 1;
     }
     n
 }
 
 /// Convenience: run invalidation on a runtime's module in place.
-pub fn invalidate_runtime(rt: &mut Runtime, changed: &Id) -> InvalidationReport {
+pub fn invalidate_runtime(
+    rt: &mut Runtime,
+    changed: &Id,
+    trust_roots: &[TrustRoot],
+) -> InvalidationReport {
     invalidate_and_recompute(
         &mut rt.module,
         changed,
         &axiom_core::registry::BuiltinExecutor,
+        trust_roots,
     )
 }

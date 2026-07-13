@@ -140,13 +140,21 @@ host installs an executor (e.g. `Runtime::with_builtin_tool`).
 ### Invalid signatures
 * **Attack:** tamper with a receipt or evidence whose `signature` field should
   have bound it to a trusted issuer.
-* **Defense:** the `signature` fields exist on `Receipt` and `Evidence`, but there
-  is **no code path that validates them**. Integrity is covered by the receipt
-  hash (above); evidence signatures are not checked at all.
-* **Crate/function:** `axiom-core/src/lib.rs` (fields present, no verifier).
-* **Residual risk:** **GAP.** Signatures are carried for forward compatibility but
-  not enforced. Verification today rests on the integrity hash and on the host's
-  responsibility to supply trustworthy evidence/receipts.
+* **Defense:** receipt authenticity is enforced by `Receipt::verify_integrity`
+  (HMAC-SHA256 tag over the signed payload under a host-configured `TrustRoot`;
+  forgery requires the provider's secret). Evidence authenticity is **enforced**:
+  when trust roots are configured, any `trust = trusted` evidence node MUST carry
+  a signature that verifies over its binding `(provider, locator, content_hash,
+  label)`; otherwise execution fails with `EvidenceForgery` and
+  `Module::verify_evidence_authenticity` rejects it on the replay path. Untrusted
+  / unverified evidence is admitted without a signature (its trust class is the
+  gate). See `crates/axiom-core/src/crypto.rs` and `spec/receipts.md §1b`.
+* **Crate/function:** `axiom-core/src/crypto.rs` (`verify`, `verify_evidence_signature`),
+  `axiom-core/src/lib.rs` (`Evidence`, `Module::verify_evidence_authenticity`),
+  `axiom-runtime/src/runtime.rs` (`exec_evidence` enforcement).
+* **Residual risk:** none for the enforced path. The only remaining assumption is
+  that the host configures correct per-provider trust-root secrets and keeps them
+  out of untrusted modules (the secret is never derivable from the module).
 
 ### Extension namespace collisions
 * **Attack:** two vendors define `foo:widget`; one shadows the other.
@@ -242,16 +250,22 @@ host installs an executor (e.g. `Runtime::with_builtin_tool`).
 
 ## Honest limitations (summary)
 
-1. **Evidence is self-attested** — the runtime checks existence, not authenticity;
-   trust must be supplied by the host.
-2. **Signatures are not validated** — `Receipt::signature` and
-   `Evidence::signature` are carried but unenforced; integrity relies on the
-   receipt hash.
+1. **Evidence authenticity is enforced only when the host configures trust
+   roots** — without trust roots, evidence is admitted by its declared trust
+   class (self-attested), exactly as before; the host opts into cryptographic
+   enforcement by supplying per-provider `TrustRoot` secrets.
+2. **Signatures ARE validated when trust roots are configured** — receipt
+   authenticity via `Receipt::verify_integrity` (HMAC-SHA256) and evidence
+   authenticity via `verify_evidence_signature` / `Module::verify_evidence_authenticity`
+   are enforced; a `trust = trusted` evidence node without a valid signature is
+   rejected (`EvidenceForgery`).
 3. **Automatic contradiction detection is opt-in** — it is a public method, not
-   part of default execution.
+   part of default execution; the user must call `detect_contradictions` (or set
+   `auto_contradictions`).
 
 The parser recursion-depth limit (`MAX_EXPR_DEPTH`) and the module statement
 cap (`MAX_MODULE_STMTS`) close the two resource-exhaustion gaps previously
 listed here. None of the remaining limitations allow a hostile module to
 *silently* verify invalid reasoning or to perform an unauthorized side effect;
-they are trust-provenance concerns that should be closed as the engine matures.
+the authenticity gap (formerly #1/#2) is now closed on the configured-trust-roots
+path.

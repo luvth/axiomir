@@ -52,6 +52,7 @@ fn verified_derivation_complete() {
             "out",
             None,
             &BuiltinExecutor,
+            &[],
         )
         .unwrap();
 
@@ -63,19 +64,24 @@ fn verified_derivation_complete() {
 }
 
 // ---------------------------------------------------------------------------
-// Property 2: undischarged mandatory obligation blocks verify
+// Property 2: a mandatory, undischarged SourceSupport obligation blocks verify,
+// and is only cleared by a real discharge referencing trusted evidence.
 // ---------------------------------------------------------------------------
 
 #[test]
 fn undischarged_obligation_blocks_verify() {
     let mut m = module_with_builtins();
 
-    // core.div generates NumericBounds (Mandatory, stays Pending) plus TypeCompat.
+    // A derived claim produced by a *risky* operation (division) carries a
+    // mandatory, non-auto-satisfied numeric-bounds proof obligation. A bare
+    // `verify` MUST be quarantined until that obligation is explicitly
+    // discharged (spec §6.6). This is what makes obligation-gated verification
+    // fundamental rather than decorative.
     let a = m
         .assert(
             "a",
             Type::Rational,
-            Value::Num(Num::Int(6)),
+            Value::Num(Num::Int(10)),
             Uncertainty::Exact,
             vec![],
             None,
@@ -94,37 +100,57 @@ fn undischarged_obligation_blocks_verify() {
         )
         .unwrap();
 
-    let out = m
+    let c = m
         .derive(
             "core.div",
             "1",
             &[a, b],
             None,
-            "out",
+            "c",
             None,
             &BuiltinExecutor,
+            &[],
         )
         .unwrap();
 
-    // At least one mandatory obligation (NumericBounds) is still Pending.
-    let has_pending_mandatory = m.claims[&out].obligations.iter().any(|oid| {
+    // A mandatory NumericBounds obligation is Pending on the derived claim.
+    let has_pending_mandatory = m.claims[&c].obligations.iter().any(|oid| {
         let o = &m.obligations[oid];
         o.severity == Severity::Mandatory && o.state == ObligationState::Pending
     });
     assert!(
         has_pending_mandatory,
-        "expected a pending mandatory obligation from core.div"
+        "expected a pending mandatory numeric-bounds obligation from div"
     );
 
-    // verify must fail.
-    let result = m.verify(out.clone());
+    // verify must fail while the obligation is undischarged.
     assert!(
-        result.is_err(),
+        m.verify(c.clone()).is_err(),
         "verify should have returned Err for undischarged obligation"
     );
+    assert_ne!(m.claims[&c].status, ClaimStatus::Verified);
 
-    // The claim must not be Verified.
-    assert_ne!(m.claims[&out].status, ClaimStatus::Verified);
+    // Discharging the pending obligation by trusted evidence clears the gate
+    // and lets the claim verify.
+    let e_trusted = m.add_evidence(
+        "et",
+        "text/plain",
+        None,
+        TrustClass::Trusted,
+        "loc2",
+        "test-source",
+        None,
+    );
+    let obl = m.claims[&c]
+        .obligations
+        .iter()
+        .find(|oid| m.obligations[*oid].state == ObligationState::Pending)
+        .cloned()
+        .expect("expected a pending obligation to discharge");
+    m.discharge(obl, e_trusted, ObligationState::Satisfied)
+        .unwrap();
+    m.verify(c.clone()).unwrap();
+    assert_eq!(m.claims[&c].status, ClaimStatus::Verified);
 }
 
 // ---------------------------------------------------------------------------
@@ -160,16 +186,14 @@ fn assertion_cannot_silent_verify() {
 }
 
 // ---------------------------------------------------------------------------
-// Property 4: receipt tampering detected
+// Property 4: receipt authenticity — naive and adversarial forgery both rejected
 // ---------------------------------------------------------------------------
 
 #[test]
 fn receipt_tampering_detected() {
+    let trust = TrustRoot::new("p", b"k");
+    let roots = [trust.clone()];
     let mut m = module_with_builtins();
-
-    // We don't strictly need the evidence for add_receipt, but the task spec
-    // shows an add_evidence call first — we include it for completeness.
-    let _eid = m.add_evidence("e", "text/plain", None, TrustClass::Unverified, "loc");
 
     let ih = content_id(Domain::Receipt, &serde_json::json!({"x": 1})).unwrap();
     let r = m.add_receipt(
@@ -180,21 +204,35 @@ fn receipt_tampering_detected() {
         ih,
         &Value::Num(Num::Int(1)),
         Type::Rational,
+        &trust,
     );
 
-    // Untampered receipt must verify.
+    // Untampered, authentically-signed receipt verifies.
     assert!(
-        m.receipts[&r].verify_integrity(),
-        "fresh receipt should pass integrity check"
+        m.receipts[&r].verify_integrity(&roots),
+        "fresh receipt should pass authenticity check"
     );
 
-    // Tamper: change the output value.
+    // Naive tamper (change output, leave the tag) must fail.
     m.receipts.get_mut(&r).unwrap().output = Value::Num(Num::Int(2));
-
-    // Now integrity must fail.
     assert!(
-        !m.receipts[&r].verify_integrity(),
-        "tampered receipt should fail integrity check"
+        !m.receipts[&r].verify_integrity(&roots),
+        "tampered receipt should fail authenticity check"
+    );
+
+    // Adversarial forger who recomputes the payload hash but lacks the secret
+    // still cannot forge a valid tag: verification must remain false.
+    {
+        let rec = m.receipts.get_mut(&r).unwrap();
+        rec.integrity = content_id(
+            Domain::Receipt,
+            &serde_json::from_slice::<serde_json::Value>(&rec.signed_payload()).unwrap(),
+        )
+        .unwrap();
+    }
+    assert!(
+        !m.receipts[&r].verify_integrity(&roots),
+        "adversarially re-hashed but unsigned receipt must still fail"
     );
 }
 
@@ -346,5 +384,135 @@ fn context_isolation_and_contradiction_preserves_claims() {
     assert!(
         m.claims.contains_key(&c2),
         "c2 must still exist after contradiction"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Evidence authenticity: forgery is rejected, valid signatures pass.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn evidence_authenticity_rejects_unsigned_high_trust() {
+    use axiom_core::{crypto::TrustRoot, verify_evidence, EvidenceAuthError};
+
+    let root = TrustRoot::new("src:lab", b"secret-key-material");
+    let mut m = module_with_builtins();
+    // A trusted evidence node with NO signature must fail authentication when a
+    // trust root is configured. This is the enforced (not advisory) property
+    // that makes a forged receipt impossible under the trust model.
+    let ev = m.add_evidence(
+        "e",
+        "text/plain",
+        None,
+        TrustClass::Trusted,
+        "loc",
+        "src:lab",
+        None,
+    );
+    let e = &m.evidence[&ev];
+    assert_eq!(
+        verify_evidence(
+            std::slice::from_ref(&root),
+            &e.provider,
+            &e.acquisition.locator,
+            &e.media_type,
+            &e.content_hash.as_str(),
+            e.trust,
+            &e.label,
+            &e.signature
+        ),
+        Err(EvidenceAuthError::NoSignature),
+        "unsigned trusted evidence must NOT pass authentication"
+    );
+    assert!(
+        !m.verify_evidence_authenticity(std::slice::from_ref(&root)),
+        "unsigned trusted evidence must NOT pass authenticity"
+    );
+    let _ = ev;
+}
+
+#[test]
+fn evidence_authenticity_accepts_valid_signature() {
+    use axiom_core::crypto::{sign_evidence, TrustRoot};
+
+    let root = TrustRoot::new("src:lab", b"secret-key-material");
+    let mut m = module_with_builtins();
+    let ev_id = m.add_evidence(
+        "e",
+        "text/plain",
+        None,
+        TrustClass::Trusted,
+        "loc",
+        "src:lab",
+        None,
+    );
+
+    // The producer signs the evidence binding under the trust root. The binding
+    // now includes media type and trust class, so a retyped node is rejected.
+    let content_hash = m.evidence[&ev_id].content_hash.as_str().to_string();
+    let sig = sign_evidence(
+        std::slice::from_ref(&root),
+        "src:lab",
+        "loc",
+        "text/plain",
+        &content_hash,
+        "Trusted",
+        "e",
+    );
+    m.evidence.get_mut(&ev_id).unwrap().signature = sig.map(hex::encode);
+
+    assert!(
+        m.verify_evidence_authenticity(std::slice::from_ref(&root)),
+        "correctly signed trusted evidence must pass authenticity"
+    );
+
+    // Tampering with the label binding invalidates the signature.
+    let mut m2 = module_with_builtins();
+    let e2 = m2.add_evidence(
+        "e",
+        "text/plain",
+        None,
+        TrustClass::Trusted,
+        "loc",
+        "src:lab",
+        None,
+    );
+    let content_hash2 = m2.evidence[&e2].content_hash.as_str().to_string();
+    let sig2 = sign_evidence(
+        std::slice::from_ref(&root),
+        "src:lab",
+        "loc",
+        "text/plain",
+        &content_hash2,
+        "Trusted",
+        "e",
+    );
+    let mut ev = m2.evidence.get_mut(&e2).unwrap().clone();
+    ev.label = "tampered".into();
+    ev.signature = sig2.map(hex::encode);
+    m2.evidence.insert(e2, ev);
+    assert!(
+        !m2.verify_evidence_authenticity(std::slice::from_ref(&root)),
+        "tampered label binding must fail authenticity"
+    );
+}
+
+#[test]
+fn evidence_authenticity_permits_untrusted_without_signature() {
+    use axiom_core::crypto::TrustRoot;
+    let mut m = module_with_builtins();
+    m.add_evidence(
+        "e",
+        "text/plain",
+        None,
+        TrustClass::Untrusted,
+        "loc",
+        "src:lab",
+        None,
+    );
+    // Untrusted evidence never requires a signature.
+    assert!(
+        m.verify_evidence_authenticity(&[TrustRoot::new("src:lab", b"k")]),
+        "untrusted evidence must pass regardless of signature"
     );
 }

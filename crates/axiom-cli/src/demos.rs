@@ -9,7 +9,7 @@ use axiom_incremental::invalidate_and_recompute;
 use axiom_runtime::{run_source, Runtime};
 
 pub fn available() -> Vec<&'static str> {
-    vec!["1", "2", "3", "4", "5", "6", "7", "all"]
+    vec!["1", "2", "3", "4", "5", "6", "7", "8", "all"]
 }
 
 struct Demo {
@@ -52,6 +52,7 @@ pub fn run_demo(name: &str) -> Outcome {
         "5" => demos.push(demo5()),
         "6" => demos.push(demo6()),
         "7" => demos.push(demo7()),
+        "8" => demos.push(demo8()),
         "all" => {
             demos.push(demo1());
             demos.push(demo2());
@@ -60,6 +61,7 @@ pub fn run_demo(name: &str) -> Outcome {
             demos.push(demo5());
             demos.push(demo6());
             demos.push(demo7());
+            demos.push(demo8());
         }
         other => {
             return Outcome::usage(format!(
@@ -193,7 +195,7 @@ derive bad = qadd(force, time) : quantity
         None,
     );
     let coeff_id = rt2.claim("coeff").unwrap();
-    let report = invalidate_and_recompute(&mut rt2.module, &coeff_id, &BuiltinExecutor);
+    let report = invalidate_and_recompute(&mut rt2.module, &coeff_id, &BuiltinExecutor, &[]);
     let adj_invalidated = report
         .invalidated
         .iter()
@@ -522,7 +524,7 @@ verify c
 
     // Invalidate base (the root premise). Only its dependents (a, b, c) must change.
     let base_id = rt.claim("base").unwrap();
-    let report = invalidate_and_recompute(&mut rt.module, &base_id, &BuiltinExecutor);
+    let report = invalidate_and_recompute(&mut rt.module, &base_id, &BuiltinExecutor, &[]);
 
     let frontier = ["a", "b", "c"].iter().all(|l| {
         report
@@ -561,7 +563,7 @@ verify c
         None,
     );
     let base_id = rt.claim("base").unwrap();
-    let report2 = invalidate_and_recompute(&mut rt.module, &base_id, &BuiltinExecutor);
+    let report2 = invalidate_and_recompute(&mut rt.module, &base_id, &BuiltinExecutor, &[]);
     let recomputed = ["a", "b", "c"].iter().all(|l| {
         report2
             .recomputed
@@ -739,5 +741,97 @@ derive out = vendor.widget(a) : rational
         true,
         "replay stability verified in Demo 3 (identical digest under receipt-only replay)",
     );
+    d
+}
+
+/// Demo 8 — Producer pipeline: a structured reasoning plan is translated into a
+/// valid Axiom module, executed, verified, and incrementally updated. This is
+/// the concrete answer to the review's "who produces Axiom?": an external
+/// producer emits a `ReasoningPlan` (the wire format) and `axiom-producer`
+/// renders it to deterministic Axiom text.
+fn demo8() -> Demo {
+    use axiom_producer::produce_from_json;
+    let mut d = Demo {
+        name: "8",
+        title: "Producer pipeline (structured reasoning -> Axiom module)",
+        steps: vec![],
+    };
+
+    let json = r#"{
+        "module_name": "producer_demo",
+        "premises": [
+            {"label":"force","value":{"Quantity":[10,"N"]},"evidence":"sensor: 10 N"},
+            {"label":"dist","value":{"Quantity":[2,"m"]},"evidence":"sensor: 2 m"}
+        ],
+        "assumptions": [{"label":"coeff","value":{"Quantity":[1,"1"]},"scope":"adj"}],
+        "steps": [
+            {"label":"work","op":"core.qmul","inputs":["force","dist"],"requires_obligation":false,"discharge_by":null,"verify":true},
+            {"label":"adj","op":"core.qmul","inputs":["work","coeff"],"requires_obligation":true,"discharge_by":"ev_force","verify":true}
+        ]
+    }"#;
+
+    let src = match produce_from_json(json) {
+        Ok(s) => s,
+        Err(e) => {
+            d.step(false, &format!("producer rejected a well-formed plan: {e}"));
+            return d;
+        }
+    };
+    d.step(true, "producer translated the plan into valid Axiom source");
+
+    let ast = match axiom_parser::parse_module(&src) {
+        Ok(a) => a,
+        Err(e) => {
+            d.step(false, &format!("producer output failed to parse: {e:?}"));
+            return d;
+        }
+    };
+    let mut rt = Runtime::new("producer_demo");
+    match rt.execute(&ast) {
+        Ok(_) => d.step(true, "produced module parses and executes"),
+        Err(e) => {
+            d.step(false, &format!("produced module failed to execute: {e}"));
+            return d;
+        }
+    }
+    d.step(
+        rt.verified_claims().len() == 2,
+        "both derived claims verify under the obligation gate",
+    );
+
+    // Deterministic: a second translation of the same plan yields identical source.
+    let src2 = produce_from_json(json).unwrap();
+    d.step(
+        src == src2,
+        "producer output is deterministic (byte-identical)",
+    );
+
+    // Incremental update after a corrected premise.
+    let force_id = rt.claim("force").unwrap();
+    rt.module
+        .assert(
+            "force",
+            axiom_core::Type::Quantity,
+            axiom_core::Value::Quantity(axiom_types::Quantity {
+                value: axiom_types::num::Num::Int(20),
+                unit: axiom_types::Unit::base("N"),
+            }),
+            axiom_core::Uncertainty::Exact,
+            vec![],
+            None,
+            None,
+        )
+        .unwrap();
+    let report = axiom_incremental::invalidate_runtime(&mut rt, &force_id, &[]);
+    let work = rt.claim("work").unwrap();
+    let adj = rt.claim("adj").unwrap();
+    let coeff = rt.claim("coeff").unwrap();
+    d.step(
+        report.invalidated.contains(&work)
+            && report.invalidated.contains(&adj)
+            && !report.invalidated.contains(&coeff),
+        "incremental update invalidates only force's dependents (exact frontier)",
+    );
+    let _ = (work, adj, coeff);
     d
 }

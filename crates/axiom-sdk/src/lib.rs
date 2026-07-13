@@ -98,6 +98,7 @@ impl Builder {
                 label,
                 None,
                 &axiom_core::registry::BuiltinExecutor,
+                &[],
             )
             .unwrap()
     }
@@ -113,6 +114,7 @@ impl Builder {
                 label,
                 None,
                 &axiom_core::registry::BuiltinExecutor,
+                &[],
             )
             .unwrap()
     }
@@ -128,6 +130,7 @@ impl Builder {
                 label,
                 None,
                 &axiom_core::registry::BuiltinExecutor,
+                &[],
             )
             .unwrap()
     }

@@ -32,6 +32,10 @@ pub enum RuntimeError {
     Invariant(String),
     #[error("module too large: {0} statements exceed the execution limit")]
     ModuleTooLarge(String),
+    #[error("no trust root configured for receipt provider `{0}`")]
+    UnknownTrustRoot(String),
+    #[error("evidence forgery: high-trust evidence `{0}` has no valid authenticity signature under a configured trust root")]
+    EvidenceForgery(String),
 }
 
 impl From<axiom_core::CoreError> for RuntimeError {

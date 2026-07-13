@@ -3,5 +3,6 @@ assert a = 10 : rational
 assert b = 2 : rational
 derive q = div(a, b) : rational
 require numeric-bounds on q
-discharge q by a as satisfied
+evidence bound "numeric" "q in [-inf,+inf]; divisor b=2 != 0" trust = unverified
+discharge q by bound as satisfied
 verify q

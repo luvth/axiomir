@@ -561,7 +561,7 @@ pub fn invalidate(path: &str, node_label: &str) -> Outcome {
                 Ok(id) => id,
                 Err(e) => return Outcome::fail(format!("invalidate error: {}", e), Json::Null),
             };
-            let report = invalidate_and_recompute(&mut rt.module, &id, &BuiltinExecutor);
+            let report = invalidate_and_recompute(&mut rt.module, &id, &BuiltinExecutor, &[]);
             let mut lines = vec![];
             lines.push(format!(
                 "invalidation frontier rooted at '{}' ({})",

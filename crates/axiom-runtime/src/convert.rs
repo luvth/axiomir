@@ -85,6 +85,22 @@ pub fn convert_expr(e: &Expr) -> Result<Value, RuntimeError> {
             lo: num_of(convert_expr(lo)?)?,
             hi: num_of(convert_expr(hi)?)?,
         }),
+        Expr::RationalLit { num, den } => {
+            let n: i128 = num.parse().map_err(|_| {
+                RuntimeError::Value(format!("invalid rational numerator `{}`", num))
+            })?;
+            let d: i128 = den.parse().map_err(|_| {
+                RuntimeError::Value(format!("invalid rational denominator `{}`", den))
+            })?;
+            if d == 0 {
+                return Err(RuntimeError::Value(
+                    "rational denominator must be non-zero".into(),
+                ));
+            }
+            Ok(Value::Num(
+                Num::rational(n, d).map_err(|e| RuntimeError::Value(e.to_string()))?,
+            ))
+        }
         Expr::Record(fields) => {
             let mut out = vec![];
             for (n, fv) in fields {

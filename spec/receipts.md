@@ -22,7 +22,23 @@ r = ( id, operation, op_version, provider, logical_time,
 * `output_hash` — content hash of `output`.
 * `schema` — the declared output type.
 * `integrity` — `SHA-256(receipt || 0x00 || canonical_bytes(integrity_fields))`.
-* `signature` — optional cryptographic signature over `integrity` by `provider`.
+* `signature` — optional cryptographic signature (HMAC-SHA256) over the evidence
+  binding `(provider, locator, content_hash, label)` by `provider`.
+
+## 1b. Evidence authenticity
+
+An evidence node `e ∈ E` carries an optional `signature` over its canonical binding
+`(provider, locator, content_hash, label)`. The signature namespace is the
+`provider`: a tag is valid only under the trusted secret configured for that provider.
+
+* When the host has configured **trust roots** and an evidence node is declared with
+  `trust = trusted`, the node **MUST** carry a signature that verifies under a matching
+  trust root. A node without a valid signature is **rejected at execution time**
+  (`EvidenceForgery`) and by `Module::verify_evidence_authenticity` on the replay path.
+  This makes a forged or swapped high-trust evidence node impossible under the trust
+  model — authenticity is *enforced*, not advisory.
+* `Unverified` and `Untrusted` evidence never require a signature; they are always
+  admitted (their lower trust class is itself the gating signal).
 
 ## 2. Integrity verification
 

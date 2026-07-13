@@ -19,6 +19,11 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+pub mod crypto;
+pub use crypto::{
+    sign as sign_receipt, verify as verify_receipt_tag, verify_evidence, EvidenceAuthError,
+    TrustRoot,
+};
 pub mod registry;
 pub use registry::{builtin_operations, BuiltinExecutor, OpExecutor, OpRegistry};
 
@@ -225,6 +230,9 @@ pub struct Evidence {
     pub content_hash: Id,
     pub media_type: String,
     pub provenance: Provenance,
+    /// The provider (authority) that vouches for this evidence node. Used as
+    /// the HMAC key namespace when an authenticity signature is attached.
+    pub provider: String,
     pub acquisition: AcquisitionMeta,
     pub trust: TrustClass,
     pub signature: Option<String>,
@@ -352,15 +360,19 @@ pub struct Receipt {
     pub output: Value,
     pub output_hash: Id,
     pub schema: Type,
+    /// Content hash of the signed payload (tamper-evidence).
     pub integrity: Id,
-    pub signature: Option<String>,
+    /// Keyed HMAC-SHA256 tag over the signed payload, under the trusted secret
+    /// of `provider`. An empty tag means the receipt is unsigned and MUST NOT
+    /// be accepted as authentic by any verifier.
+    pub signature: Vec<u8>,
 }
 
 impl Receipt {
-    /// Recompute the integrity digest from the recorded fields. If it differs
-    /// from `self.integrity`, the receipt was tampered with.
-    pub fn verify_integrity(&self) -> bool {
-        let bytes = serde_json::to_vec(&serde_json::json!({
+    /// The canonical bytes of the fields bound by the provider's authenticity:
+    /// operation, op version, provider, logical time, inputs hash, output, schema.
+    pub fn signed_payload(&self) -> Vec<u8> {
+        axiom_encoding::canonical_bytes(&serde_json::json!({
             "operation": self.operation,
             "op_version": self.op_version,
             "provider": self.provider,
@@ -369,13 +381,28 @@ impl Receipt {
             "output": self.output,
             "schema": self.schema.name(),
         }))
-        .unwrap();
+        .expect("receipt payload serializes")
+    }
+
+    /// Verify both tamper-evidence (payload hash) and cryptographic
+    /// authenticity (HMAC tag under a trusted provider secret).
+    ///
+    /// A receipt is authentic only if a [`TrustRoot`] for its `provider` exists
+    /// and the stored tag verifies under that secret. A self-consistent but
+    /// forged receipt (or one with an empty tag) is rejected.
+    pub fn verify_integrity(&self, trust_roots: &[TrustRoot]) -> bool {
+        // 1. Tamper-evidence: the payload hash must match.
+        let payload = self.signed_payload();
         let recomputed = content_id(
             Domain::Receipt,
-            &serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+            &serde_json::from_slice::<serde_json::Value>(&payload).unwrap(),
         )
-        .unwrap();
-        recomputed == self.integrity
+        .expect("payload hashes");
+        if recomputed != self.integrity {
+            return false;
+        }
+        // 2. Authenticity: the HMAC tag must verify under a trusted secret.
+        crate::crypto::verify(trust_roots, &self.provider, &payload, &self.signature)
     }
 }
 
@@ -484,6 +511,10 @@ pub enum CoreError {
     SilentVerify(Id),
     #[error("receipt {0} failed integrity check (tampering suspected)")]
     ReceiptTampered(Id),
+    #[error("receipt {0} inputs hash does not match the derivation's actual inputs")]
+    ReceiptInputMismatch(Id),
+    #[error("no trust root configured for receipt provider {0}")]
+    UnknownTrustRoot(String),
     #[error("contradiction requires at least two claims")]
     ContradictionNeedsTwo,
     #[error("context merge conflict on claim {0}")]
@@ -514,6 +545,18 @@ pub struct Module {
     pub events: Vec<Event>,
     pub root_context: Id,
     pub runtime_version: String,
+}
+
+/// The full set of claims visible in a context: its own `local_claims` plus
+/// everything it inherited from ancestors, deduplicated.
+fn full_claim_set(ctx: &Context) -> Vec<Id> {
+    let mut v = ctx.local_claims.clone();
+    for x in &ctx.inherited_claims {
+        if !v.contains(x) {
+            v.push(x.clone());
+        }
+    }
+    v
 }
 
 impl Module {
@@ -605,13 +648,25 @@ impl Module {
             uncertainty,
             context_id: ctx.clone(),
             assumptions: vec![],
-            evidence,
+            evidence: evidence.clone(),
             derivation: None,
             obligations: vec![],
             invalidation_conditions: vec![],
             provenance: Provenance::default(),
         };
         self.claims.insert(id.clone(), claim);
+        // A claim resting on untrusted evidence carries a mandatory
+        // source-support obligation that blocks `verify` until discharged by
+        // trusted evidence or an explicit discharge. This is what makes the
+        // verification gate semantic rather than decorative.
+        for e in &evidence {
+            if let Some(ev) = self.evidence.get(e) {
+                if ev.trust == TrustClass::Untrusted {
+                    self.add_obligation(&id, ObligationKind::SourceSupport, true, false, None);
+                    break;
+                }
+            }
+        }
         if let Some(c) = self.contexts.get_mut(&ctx) {
             c.local_claims.push(id.clone());
         }
@@ -707,6 +762,7 @@ impl Module {
         output_label: &str,
         receipt: Option<Id>,
         executor: &dyn OpExecutor,
+        trust_roots: &[TrustRoot],
     ) -> Result<Id, CoreError> {
         let op_id = OperationDef::identity(op_name, op_version);
         let def = self
@@ -759,11 +815,27 @@ impl Module {
                 .receipts
                 .get(rid)
                 .ok_or_else(|| CoreError::UnknownReceipt(rid.clone()))?;
-            if !r.verify_integrity() {
+            // Bind the receipt to the derivation's actual inputs: the receipt's
+            // inputs hash MUST equal the content hash of the values this
+            // derivation actually consumes. A self-consistent receipt built for
+            // different inputs cannot be attached here.
+            let actual_inputs_hash =
+                content_id(Domain::Receipt, &serde_json::json!(values)).expect("inputs hash");
+            if r.inputs_hash != actual_inputs_hash {
+                return Err(CoreError::ReceiptInputMismatch(rid.clone()));
+            }
+            // Authenticity: an unsigned or unverifiable receipt is rejected.
+            if r.signature.is_empty() {
                 return Err(CoreError::ReceiptTampered(rid.clone()));
             }
-            // Output is reconstructed from the receipt's output hash by looking
-            // up the corresponding value via the executor's receipt resolver.
+            if !r.verify_integrity(trust_roots) {
+                if !trust_roots.iter().any(|t| t.provider == r.provider) {
+                    return Err(CoreError::UnknownTrustRoot(r.provider.clone()));
+                }
+                return Err(CoreError::ReceiptTampered(rid.clone()));
+            }
+            // Output is reconstructed from the receipt via the executor's
+            // receipt resolver, which returns the recorded output value.
             let v = executor
                 .resolve_receipt(r)
                 .map_err(|e| CoreError::Exec(e.to_string()))?;
@@ -943,6 +1015,54 @@ impl Module {
         Ok(out_id)
     }
 
+    // -- obligation attachment -------------------------------------------
+
+    /// Attach a first-class obligation to a claim. When `auto` is true the
+    /// obligation is discharged immediately: the operation or derivation has
+    /// performed the check itself, and `discharged_by` records the discharging
+    /// node (the derivation, or an evidence/receipt node). When `auto` is false
+    /// the obligation stays `Pending` and blocks `verify` until a real
+    /// discharge references evidence or a receipt (see `Module::discharge`).
+    pub fn add_obligation(
+        &mut self,
+        target: &Id,
+        kind: ObligationKind,
+        mandatory: bool,
+        auto: bool,
+        discharged_by: Option<Id>,
+    ) {
+        let severity = if mandatory {
+            Severity::Mandatory
+        } else {
+            Severity::Advisory
+        };
+        let state = if auto {
+            ObligationState::Satisfied
+        } else {
+            ObligationState::Pending
+        };
+        let ojson = serde_json::json!({
+            "kind": kind.name(),
+            "target": target.as_str(),
+            "severity": if mandatory { "mandatory" } else { "advisory" },
+        });
+        let oid = content_id(Domain::Obligation, &ojson).unwrap();
+        let obl = Obligation {
+            id: oid.clone(),
+            kind: kind.clone(),
+            target: target.clone(),
+            inputs: vec![target.clone()],
+            severity,
+            state,
+            discharged_by,
+            message: format!("{} obligation for {}", kind.name(), target.as_str()),
+        };
+        self.obligations.insert(oid.clone(), obl);
+        if let Some(c) = self.claims.get_mut(target) {
+            c.obligations.push(oid);
+        }
+    }
+
     // -- obligation discharge --------------------------------------------
 
     pub fn discharge(
@@ -1100,7 +1220,22 @@ impl Module {
                 return Err(CoreError::UnknownAssumption(a.clone()));
             }
         }
-        let pctx = self.contexts.get(&parent).unwrap().clone();
+        // Inheritance is transitive: a child sees every claim local to any of
+        // its ancestor contexts, not only the direct parent.
+        let mut inherited = Vec::new();
+        let mut cur = Some(parent.clone());
+        while let Some(pid) = cur {
+            if let Some(anc) = self.contexts.get(&pid) {
+                for l in &anc.local_claims {
+                    if !inherited.contains(l) {
+                        inherited.push(l.clone());
+                    }
+                }
+                cur = anc.parent.clone();
+            } else {
+                break;
+            }
+        }
         let cjson = serde_json::json!({
             "parent": parent.as_str(),
             "label": label,
@@ -1112,7 +1247,7 @@ impl Module {
             parent: Some(parent.clone()),
             label: label.to_string(),
             assumptions: assumptions.to_vec(),
-            inherited_claims: pctx.local_claims.clone(),
+            inherited_claims: inherited,
             local_claims: vec![],
             contradictions: vec![],
             merge_of: None,
@@ -1136,11 +1271,14 @@ impl Module {
         let id = content_id(Domain::Context, &mjson).unwrap();
         let mut conflicts = vec![];
         // Detect semantic conflicts: same semantic_id, different value/status.
+        // Scans the *full* claim sets (local + inherited) of both branches.
         let ca = self.contexts.get(&a).unwrap().clone();
         let cb = self.contexts.get(&b).unwrap().clone();
-        for cid in &ca.local_claims {
+        let a_claims = full_claim_set(&ca);
+        let b_claims = full_claim_set(&cb);
+        for cid in &a_claims {
             if let Some(cc) = self.claims.get(cid) {
-                for did in &cb.local_claims {
+                for did in &b_claims {
                     if let Some(dc) = self.claims.get(did) {
                         if cc.semantic_id == dc.semantic_id && cc.value != dc.value {
                             conflicts.push(cc.semantic_id.clone());
@@ -1163,8 +1301,8 @@ impl Module {
                 v
             },
             inherited_claims: {
-                let mut v = ca.local_claims.clone();
-                for x in &cb.local_claims {
+                let mut v = a_claims;
+                for x in &b_claims {
                     if !v.contains(x) {
                         v.push(x.clone());
                     }
@@ -1316,6 +1454,7 @@ impl Module {
 
 // Convenience constructors for evidence and receipts used by demos/runtime.
 impl Module {
+    #[allow(clippy::too_many_arguments)]
     pub fn add_evidence(
         &mut self,
         label: &str,
@@ -1323,6 +1462,8 @@ impl Module {
         content: Option<Value>,
         trust: TrustClass,
         locator: &str,
+        provider: &str,
+        signature: Option<String>,
     ) -> Id {
         let content_hash = {
             let j =
@@ -1341,17 +1482,51 @@ impl Module {
             content_hash,
             media_type: media_type.to_string(),
             provenance: Provenance::default(),
+            provider: provider.to_string(),
             acquisition: AcquisitionMeta {
                 locator: locator.to_string(),
                 acquired_at: 0,
             },
             trust,
-            signature: None,
+            signature,
             content,
             label: label.to_string(),
         };
         self.evidence.insert(id.clone(), ev);
         id
+    }
+
+    /// Replay-time authenticity check for all evidence nodes.
+    ///
+    /// Returns `false` if any non-untrusted evidence node lacks a signature
+    /// that verifies under a configured trust root (spec §6: receipt
+    /// authenticity is mandatory). Untrusted evidence is always permitted.
+    /// Used by the replay/encoding path to reject forged modules even when no
+    /// execution is performed.
+    pub fn verify_evidence_authenticity(&self, trust_roots: &[TrustRoot]) -> bool {
+        if trust_roots.is_empty() {
+            return true;
+        }
+        self.evidence.values().all(|ev| {
+            // Untrusted evidence is always admitted; its trust class is the gate.
+            if ev.trust != TrustClass::Trusted {
+                return true;
+            }
+            // A trusted evidence node MUST carry a signature that verifies over
+            // its full canonical binding (provider, locator, media type,
+            // content digest, trust class, label) under a configured trust root.
+            let trust_str = format!("{:?}", ev.trust);
+            crate::crypto::verify_evidence_signature(
+                trust_roots,
+                &ev.provider,
+                &ev.acquisition.locator,
+                &ev.media_type,
+                &ev.content_hash.as_str(),
+                &trust_str,
+                &ev.label,
+                &ev.signature,
+            )
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1364,6 +1539,7 @@ impl Module {
         inputs_hash: Id,
         output: &Value,
         schema: Type,
+        trust: &TrustRoot,
     ) -> Id {
         let output_hash = content_id(
             Domain::Receipt,
@@ -1400,7 +1576,10 @@ impl Module {
             }),
         )
         .unwrap();
-        let receipt = Receipt {
+        // Build the receipt with an empty tag, then sign the payload under the
+        // provider's trusted secret. The tag is what makes the receipt
+        // authentic; without it, `verify_integrity` rejects the receipt.
+        let mut receipt = Receipt {
             id: rid.clone(),
             operation: operation.to_string(),
             op_version: op_version.to_string(),
@@ -1411,8 +1590,10 @@ impl Module {
             output_hash,
             schema,
             integrity,
-            signature: None,
+            signature: vec![],
         };
+        let payload = receipt.signed_payload();
+        receipt.signature = crate::crypto::sign(&trust.secret, &payload);
         self.receipts.insert(rid.clone(), receipt);
         rid
     }
@@ -1480,6 +1661,7 @@ mod tests {
                 "out",
                 None,
                 &BuiltinExecutor,
+                &[],
             )
             .unwrap();
         // out is Pending; verifying should succeed because TypeCompat auto-satisfied.
@@ -1507,6 +1689,8 @@ mod tests {
 
     #[test]
     fn receipt_tampering_detected() {
+        let trust = TrustRoot::new("p", b"k");
+        let roots = [trust.clone()];
         let mut m = Module::new("t");
         let r = m.add_receipt(
             "tool.x",
@@ -1516,11 +1700,27 @@ mod tests {
             content_id(Domain::Receipt, &serde_json::json!({"x":1})).unwrap(),
             &Value::Num(Num::Int(1)),
             Type::Rational,
+            &trust,
         );
-        // Tamper with the returned output value; integrity must no longer hold.
-        m.receipts.get_mut(&r).unwrap().output = Value::Num(Num::Int(2));
-        assert!(!m.receipts[&r].verify_integrity());
-        // An untampered receipt verifies.
+        // Untampered, authentic receipt verifies.
+        assert!(m.receipts[&r].verify_integrity(&roots));
+
+        // Forgery without the key: change the output AND recompute the payload
+        // hash, but the HMAC tag cannot be reproduced without the trusted secret.
+        // This is the adversarial case the old self-hash check missed.
+        {
+            let rec = m.receipts.get_mut(&r).unwrap();
+            rec.output = Value::Num(Num::Int(2));
+            // recompute the payload hash to simulate a careful forger
+            rec.integrity = content_id(
+                Domain::Receipt,
+                &serde_json::from_slice::<serde_json::Value>(&rec.signed_payload()).unwrap(),
+            )
+            .unwrap();
+        }
+        assert!(!m.receipts[&r].verify_integrity(&roots));
+
+        // An untampered, authentically-signed receipt verifies.
         let r2 = m.add_receipt(
             "tool.y",
             "1",
@@ -1529,7 +1729,22 @@ mod tests {
             content_id(Domain::Receipt, &serde_json::json!({"x":1})).unwrap(),
             &Value::Num(Num::Int(7)),
             Type::Rational,
+            &trust,
         );
-        assert!(m.receipts[&r2].verify_integrity());
+        assert!(m.receipts[&r2].verify_integrity(&roots));
+
+        // A receipt from an untrusted provider (no matching trust root) is
+        // rejected even with a perfectly self-consistent payload.
+        let r3 = m.add_receipt(
+            "tool.z",
+            "1",
+            "hostile",
+            0,
+            content_id(Domain::Receipt, &serde_json::json!({"x":1})).unwrap(),
+            &Value::Num(Num::Int(9)),
+            Type::Rational,
+            &TrustRoot::new("hostile", b"evil"),
+        );
+        assert!(!m.receipts[&r3].verify_integrity(&roots));
     }
 }

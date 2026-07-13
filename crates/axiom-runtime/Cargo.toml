@@ -17,5 +17,8 @@ serde_json.workspace = true
 indexmap = { version = "2", features = ["serde"] }
 
 [dev-dependencies]
+axiom-core.workspace = true
 axiom-parser.workspace = true
 axiom-encoding.workspace = true
+axiom-producer.workspace = true
+hex.workspace = true

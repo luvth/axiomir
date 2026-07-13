@@ -237,7 +237,7 @@ fn run_valid(stem: &str, path: &Path, expect: &Expectation) -> FixtureResult {
                 return finish(stem, problems);
             }
         };
-        let report = invalidate_and_recompute(&mut rt.module, &root, &BuiltinExecutor);
+        let report = invalidate_and_recompute(&mut rt.module, &root, &BuiltinExecutor, &[]);
         let invalidated_labels: Vec<String> = report
             .invalidated
             .iter()

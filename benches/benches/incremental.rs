@@ -47,7 +47,7 @@ fn bench_invalidate_chain(c: &mut Criterion) {
                 b.iter(|| {
                     let mut m = module.clone();
                     change_premise(&mut m, &base);
-                    let report = invalidate_and_recompute(&mut m, &base, &BuiltinExecutor);
+                    let report = invalidate_and_recompute(&mut m, &base, &BuiltinExecutor, &[]);
                     black_box(report);
                 })
             },
@@ -55,7 +55,7 @@ fn bench_invalidate_chain(c: &mut Criterion) {
         // Report the affected set size for the chain (changing the root touches all).
         let mut m = module.clone();
         change_premise(&mut m, &base);
-        let report = invalidate_and_recompute(&mut m, &base, &BuiltinExecutor);
+        let report = invalidate_and_recompute(&mut m, &base, &BuiltinExecutor, &[]);
         eprintln!(
             "invalidate_chain depth={depth}: invalidated={} recomputed={} preserved={} (changes={})",
             report.invalidated.len(),
@@ -78,14 +78,14 @@ fn bench_invalidate_wide(c: &mut Criterion) {
                 b.iter(|| {
                     let mut m = module.clone();
                     change_premise(&mut m, &base);
-                    let report = invalidate_and_recompute(&mut m, &base, &BuiltinExecutor);
+                    let report = invalidate_and_recompute(&mut m, &base, &BuiltinExecutor, &[]);
                     black_box(report);
                 })
             },
         );
         let mut m = module.clone();
         change_premise(&mut m, &base);
-        let report = invalidate_and_recompute(&mut m, &base, &BuiltinExecutor);
+        let report = invalidate_and_recompute(&mut m, &base, &BuiltinExecutor, &[]);
         eprintln!(
             "invalidate_wide width={width}: invalidated={} recomputed={} preserved={} (changes={})",
             report.invalidated.len(),
@@ -109,7 +109,7 @@ fn bench_incremental_vs_full(c: &mut Criterion, label: &str, premise: &str, n: u
             b.iter(|| {
                 let mut m = module.clone();
                 change_premise(&mut m, &pid);
-                let report = invalidate_and_recompute(&mut m, &pid, &BuiltinExecutor);
+                let report = invalidate_and_recompute(&mut m, &pid, &BuiltinExecutor, &[]);
                 black_box(report);
             })
         },
@@ -121,7 +121,7 @@ fn bench_incremental_vs_full(c: &mut Criterion, label: &str, premise: &str, n: u
             b.iter(|| {
                 let mut m = module.clone();
                 change_premise(&mut m, &pid);
-                let count = full_recompute(&mut m, &BuiltinExecutor);
+                let count = full_recompute(&mut m, &BuiltinExecutor, &[]);
                 black_box(count);
             })
         },
@@ -134,7 +134,12 @@ fn bench_incremental_vs_full(c: &mut Criterion, label: &str, premise: &str, n: u
     for _ in 0..iters {
         let mut m = module.clone();
         change_premise(&mut m, &pid);
-        inc_report = Some(invalidate_and_recompute(&mut m, &pid, &BuiltinExecutor));
+        inc_report = Some(invalidate_and_recompute(
+            &mut m,
+            &pid,
+            &BuiltinExecutor,
+            &[],
+        ));
     }
     let inc_elapsed = start.elapsed();
     let mut full_count = 0;
@@ -142,7 +147,7 @@ fn bench_incremental_vs_full(c: &mut Criterion, label: &str, premise: &str, n: u
     for _ in 0..iters {
         let mut m = module.clone();
         change_premise(&mut m, &pid);
-        full_count = full_recompute(&mut m, &BuiltinExecutor);
+        full_count = full_recompute(&mut m, &BuiltinExecutor, &[]);
     }
     let full_elapsed = start.elapsed();
     let inc = inc_report.unwrap();

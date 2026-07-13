@@ -44,6 +44,12 @@ pub enum Expr {
         value: Box<Expr>,
         unit: String,
     },
+    /// Exact rational literal `rat(num, den)` with `den != 0`. Rendered and
+    /// parsed canonically; converts to a reduced `Value::Num(Num::Rational)`.
+    RationalLit {
+        num: String,
+        den: String,
+    },
     Interval {
         lo: Box<Expr>,
         hi: Box<Expr>,
@@ -68,7 +74,16 @@ pub enum Stmt {
         label: String,
         media: String,
         content: Option<String>,
+        /// Trust tier (`trusted` | `unverified` | `untrusted`).
         trust: String,
+        /// Authority that vouches for this evidence node. Distinct from
+        /// `media` (serialization) and `locator` (which artifact). Required
+        /// when `trust = trusted`; used as the HMAC namespace for `signature`.
+        provider: Option<String>,
+        /// Hex-encoded HMAC-SHA256 tag over the canonical evidence binding,
+        /// under the trusted secret configured for `provider`. Present and
+        /// verified when `trust = trusted`; absent otherwise.
+        signature: Option<String>,
         span: Span,
     },
     Assert {

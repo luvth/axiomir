@@ -200,16 +200,33 @@ impl Parser {
             None
         };
         let mut trust = "unverified".to_string();
-        if matches!(self.peek(), Tok::Ident(s) if s == "trust") {
-            self.advance();
+        let mut provider = None;
+        let mut signature = None;
+        // Optional trailing clauses (order-independent):
+        //   trust = <tier>
+        //   provider = "<ident>"
+        //   signature = "<hex>"
+        while matches!(
+            self.peek(),
+            Tok::Ident(s) if s == "trust" || s == "provider" || s == "signature"
+        ) {
+            let clause = self.expect_ident()?;
             self.expect(&Tok::Equals)?;
-            trust = self.expect_ident()?;
+            match clause.as_str() {
+                "trust" => trust = self.expect_ident()?,
+                "provider" => provider = Some(self.expect_str()?),
+                "signature" => signature = Some(self.expect_str()?),
+                // Unreachable: the while condition already restricts the set.
+                _ => unreachable!(),
+            }
         }
         Ok(Stmt::Evidence {
             label,
             media,
             content,
             trust,
+            provider,
+            signature,
             span: self.span(start),
         })
     }
@@ -250,7 +267,12 @@ impl Parser {
                 "ctx" => {
                     ctx = Some(self.expect_ident()?);
                 }
-                _ => unreachable!(),
+                _ => {
+                    return Err(vec![Diagnostic::error(
+                        format!("unexpected clause `{:?}`", clause),
+                        Some(self.peek_token().span),
+                    )])
+                }
             }
         }
         let span = self.span(start);
@@ -289,7 +311,12 @@ impl Parser {
             match clause.as_str() {
                 "scope" => scope = self.expect_str()?,
                 "ctx" => ctx = Some(self.expect_ident()?),
-                _ => unreachable!(),
+                _ => {
+                    return Err(vec![Diagnostic::error(
+                        format!("unexpected clause `{clause}`"),
+                        Some(self.peek_token().span),
+                    )])
+                }
             }
         }
         Ok(Stmt::Assume {
@@ -570,7 +597,12 @@ impl Parser {
             Tok::Sym(_) => {
                 let s = match self.peek().clone() {
                     Tok::Sym(x) => x,
-                    _ => unreachable!(),
+                    other => {
+                        return Err(vec![Diagnostic::error(
+                            format!("expected symbol, found {:?}", other),
+                            Some(self.peek_token().span),
+                        )])
+                    }
                 };
                 self.advance();
                 Ok(Expr::Sym(s))
@@ -614,6 +646,30 @@ impl Parser {
                             lo: Box::new(args[0].clone()),
                             hi: Box::new(args[1].clone()),
                         })
+                    }
+                    "rat" => {
+                        if args.len() != 2 {
+                            return Err(vec![Diagnostic::error(
+                                "rat() expects (num, den)",
+                                Some(self.peek_token().span),
+                            )]);
+                        }
+                        let (num, den) = match (&args[0], &args[1]) {
+                            (Expr::Num(a), Expr::Num(b)) => (a.clone(), b.clone()),
+                            _ => {
+                                return Err(vec![Diagnostic::error(
+                                    "rat() arguments must be integer literals",
+                                    Some(self.peek_token().span),
+                                )])
+                            }
+                        };
+                        if den == "0" {
+                            return Err(vec![Diagnostic::error(
+                                "rat() denominator must be non-zero",
+                                Some(self.peek_token().span),
+                            )]);
+                        }
+                        Ok(Expr::RationalLit { num, den })
                     }
                     "eq" | "neq" | "lt" | "le" | "gt" | "ge" | "inset" | "notinset" => {
                         Ok(Expr::Relation { op: name, args })

@@ -142,11 +142,17 @@ impl Quantity {
         })
     }
 
-    pub fn mul(&self, other: &Quantity) -> Quantity {
-        Quantity {
-            value: self.value.checked_mul(other.value).expect("mul overflow"),
+    pub fn mul(&self, other: &Quantity) -> Result<Quantity, TypeError> {
+        Ok(Quantity {
+            value: self
+                .value
+                .checked_mul(other.value)
+                .map_err(|e| TypeError::Mismatch {
+                    expected: "quantity".into(),
+                    found: e.to_string(),
+                })?,
             unit: self.unit.multiply(&other.unit),
-        }
+        })
     }
 
     pub fn div(&self, other: &Quantity) -> Result<Quantity, TypeError> {

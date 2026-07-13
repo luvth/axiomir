@@ -69,7 +69,7 @@ fn premise_change_invalidates_dependents() {
     let a = rt.claim("a").unwrap();
     let b = rt.claim("b").unwrap();
 
-    let report = invalidate_and_recompute(&mut rt.module, &base, &BuiltinExecutor);
+    let report = invalidate_and_recompute(&mut rt.module, &base, &BuiltinExecutor, &[]);
 
     // The changed premise must not appear in `invalidated`.
     assert!(
@@ -119,7 +119,7 @@ fn unrelated_premise_preserved() {
     let base = rt.claim("base").unwrap();
     let z = rt.claim("z").unwrap();
 
-    let report = invalidate_and_recompute(&mut rt.module, &base, &BuiltinExecutor);
+    let report = invalidate_and_recompute(&mut rt.module, &base, &BuiltinExecutor, &[]);
 
     // `z` must appear in `preserved`.
     assert!(
@@ -150,7 +150,7 @@ fn dirty_frontier_exactness() {
     let b = rt.claim("b").unwrap();
     let c = rt.claim("c").unwrap();
 
-    let report = invalidate_and_recompute(&mut rt.module, &base, &BuiltinExecutor);
+    let report = invalidate_and_recompute(&mut rt.module, &base, &BuiltinExecutor, &[]);
 
     // Build the union of affected (invalidated then possibly recomputed) ids.
     let affected: HashSet<_> = report
@@ -234,7 +234,7 @@ fn recompute_minimality_vs_full() {
     let base = rt_incr.claim("base").unwrap();
 
     // Run incremental invalidation + recomputation.
-    let _report = invalidate_and_recompute(&mut rt_incr.module, &base, &BuiltinExecutor);
+    let _report = invalidate_and_recompute(&mut rt_incr.module, &base, &BuiltinExecutor, &[]);
 
     // Run a fresh execution from the same source.
     let rt_fresh = run_source(SRC_DEEP_CHAIN).unwrap();
@@ -274,7 +274,7 @@ fn removal_of_middle_recomputes_only_downstream() {
     let a = rt.claim("a").unwrap();
     let b = rt.claim("b").unwrap();
 
-    let report = invalidate_and_recompute(&mut rt.module, &a, &BuiltinExecutor);
+    let report = invalidate_and_recompute(&mut rt.module, &a, &BuiltinExecutor, &[]);
 
     // `a` has a derivation so it IS included in the affected set.
     let affected: HashSet<_> = report

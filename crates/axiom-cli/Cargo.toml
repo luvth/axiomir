@@ -20,6 +20,7 @@ axiom-core = { workspace = true }
 axiom-parser = { workspace = true }
 axiom-runtime = { workspace = true }
 axiom-incremental = { workspace = true }
+axiom-producer = { workspace = true }
 axiom-conformance = { workspace = true }
 axiom-sdk = { workspace = true }
 serde = { workspace = true }

@@ -36,9 +36,23 @@ Detection is two-level:
 
 1. **Explicit** — the `contradict a b as kind` instruction records a witness the author
    asserts.
-2. **Automatic** — `detect_contradictions(ctx)` scans the context's local claims pairwise and
-   classifies conflicts using the table above (proposition negation, disjoint intervals,
-   incompatible units). Each detected conflict becomes a first-class contradiction node.
+2. **Automatic** — `detect_contradictions(ctx)` scans the context's local claims
+   (plus inherited claims) pairwise and classifies conflicts. The automatically
+   detectable kinds are exactly:
+
+   * `PropositionNegation` — `Bool(x)` vs `Bool(y)` with `x ≠ y`
+   * `IncompatibleEquality` — same label, different value
+   * `DisjointInterval` — `Interval[a,b]` vs `Interval[c,d]` with `b < c` or `d < a`
+   * `IncompatibleUnit` — equal magnitude, incompatible units
+   * `ViolatedPostcondition` — either claim carries a `Failed` obligation
+   * `AssumptionConflict` — two assumptions share a scope but disagree in value
+
+   Each detected conflict becomes a first-class contradiction node. The remaining
+   kinds (`MutuallyExclusiveMembership`, `EvidenceConflict`, `Extension(k)`) are
+   **not** inferred automatically; they are raised only via an explicit
+   `contradict a b as kind` instruction. This split is intentional: the automatic
+   set is decidable from claim values alone, while the others require domain or
+   provenance reasoning the engine does not perform.
 
 ## 4. Preservation semantics
 

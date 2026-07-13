@@ -8,8 +8,8 @@ use crate::external::{ExternalExecutor, ReplayOnlyExecutor, ToolCalculator};
 use axiom_core::registry::{builtin_operations, BuiltinExecutor};
 use axiom_core::{
     Capability, ClaimStatus, DeterminismClass, Id, Module, Obligation, ObligationKind,
-    ObligationState, OpClass, OperationDef, Severity, Type, Uncertainty, UncertaintyRule, Value,
-    Witness,
+    ObligationState, OpClass, OperationDef, Severity, TrustClass, TrustRoot, Type, Uncertainty,
+    UncertaintyRule, Value, Witness,
 };
 use axiom_encoding::{content_id, Domain};
 use axiom_parser::ast::{Stmt, TypeExpr};
@@ -25,6 +25,14 @@ pub struct Runtime {
     external: Box<dyn ExternalExecutor>,
     replay: bool,
     preloaded: Vec<axiom_core::Receipt>,
+    /// Host-configured verifying keys for receipt authenticity. A receipt is
+    /// accepted as authentic only if a trust root for its provider is present
+    /// and its HMAC tag verifies under that root's secret.
+    trust_roots: Vec<TrustRoot>,
+    /// When true, `execute` re-detects contradictions in every context after
+    /// execution (spec §5 step 6). Off by default; enable via
+    /// [`Runtime::auto_contradictions`].
+    auto_contradictions: bool,
     /// Non-fatal verification failures recorded during execution. A claim that
     /// cannot be verified is left unverified (quarantined); this is a legitimate
     /// state, not a fatal error, so valid portions of the module are preserved.
@@ -62,6 +70,8 @@ impl Runtime {
             external: Box::new(ReplayOnlyExecutor),
             replay: false,
             preloaded: vec![],
+            trust_roots: vec![TrustRoot::demo()],
+            auto_contradictions: false,
             verify_failures: vec![],
         }
     }
@@ -107,6 +117,29 @@ impl Runtime {
 
     pub fn with_builtin_tool(&mut self) -> &mut Self {
         self.external = Box::new(ToolCalculator);
+        self
+    }
+
+    /// Configure the verifying keys used to authenticate receipts during
+    /// execution and replay. Hosts MUST supply the real per-provider secrets;
+    /// the reference runtime installs only the fixture calculator's demo root.
+    pub fn with_trust_roots(&mut self, roots: Vec<TrustRoot>) -> &mut Self {
+        self.trust_roots = roots;
+        self
+    }
+
+    /// Append a single trust root.
+    pub fn add_trust_root(&mut self, root: TrustRoot) -> &mut Self {
+        self.trust_roots.push(root);
+        self
+    }
+
+    /// Enable automatic contradiction detection across all contexts after
+    /// execution (spec §5 step 6). When disabled, contradiction detection runs
+    /// only on explicit `contradict` statements or direct `detect_contradictions`
+    /// calls.
+    pub fn enable_auto_contradictions(&mut self) -> &mut Self {
+        self.auto_contradictions = true;
         self
     }
 
@@ -215,6 +248,25 @@ impl Runtime {
         self.module
             .check_verification_invariant()
             .map_err(|e| RuntimeError::Invariant(e.to_string()))?;
+
+        // Authoritative trusted-evidence authentication on the module-loading
+        // path (shared with execution via `verify_evidence`). A trusted evidence
+        // node whose provider/signature/trust-root does not verify is rejected
+        // here, so forged modules are caught even before any derivation runs.
+        if !self.module.verify_evidence_authenticity(&self.trust_roots) {
+            return Err(RuntimeError::EvidenceForgery(
+                "module contains trusted evidence that fails authentication".into(),
+            ));
+        }
+
+        if self.auto_contradictions {
+            let ctxs: Vec<Id> = self.module.contexts.keys().cloned().collect();
+            for ctx in ctxs {
+                if let Some(label) = self.module.contexts.get(&ctx).map(|c| c.label.clone()) {
+                    let _ = self.detect_contradictions(&label);
+                }
+            }
+        }
         Ok(())
     }
 
@@ -296,13 +348,65 @@ impl Runtime {
                 media,
                 content,
                 trust,
+                provider,
+                signature,
                 ..
             } => {
                 let v = content.as_ref().map(|c| Value::Str(c.clone()));
-                let id = self
-                    .module
-                    .add_evidence(label, media, v, Self::trust_of(trust), media);
-                self.evidence_labels.insert(label.clone(), id);
+                let trust_class = Self::trust_of(trust);
+                let provider = provider.clone().unwrap_or_default();
+                let id = self.module.add_evidence(
+                    label,
+                    media,
+                    v,
+                    trust_class,
+                    media,
+                    &provider,
+                    signature.clone(),
+                );
+                self.evidence_labels.insert(label.clone(), id.clone());
+                // Enforced authenticity (spec §6): when evidence claims
+                // `trusted`, the host must supply a provider, a signature, and a
+                // matching configured TrustRoot, and the signature MUST verify
+                // over the exact canonical evidence binding. Untrusted/unverified
+                // evidence is admitted without a signature.
+                if trust_class == TrustClass::Trusted {
+                    let ev = &self.module.evidence[&id];
+                    let result = axiom_core::verify_evidence(
+                        &self.trust_roots,
+                        &ev.provider,
+                        &ev.acquisition.locator,
+                        &ev.media_type,
+                        &ev.content_hash.as_str(),
+                        ev.trust,
+                        &ev.label,
+                        &ev.signature,
+                    );
+                    match result {
+                        Err(axiom_core::EvidenceAuthError::NoProvider) => {
+                            return Err(RuntimeError::EvidenceForgery(format!(
+                                "{label}: trusted evidence requires a provider"
+                            )));
+                        }
+                        Err(axiom_core::EvidenceAuthError::NoSignature) => {
+                            return Err(RuntimeError::EvidenceForgery(format!(
+                                "{label}: trusted evidence requires a signature"
+                            )));
+                        }
+                        Err(axiom_core::EvidenceAuthError::NoTrustRoot) => {
+                            return Err(RuntimeError::EvidenceForgery(format!(
+                                "{label}: no trust root for provider '{}'",
+                                ev.provider
+                            )));
+                        }
+                        Err(axiom_core::EvidenceAuthError::BadSignature) => {
+                            return Err(RuntimeError::EvidenceForgery(format!(
+                                "{label}: evidence signature does not verify"
+                            )));
+                        }
+                        Ok(()) => {}
+                    }
+                }
                 Ok(())
             }
             Stmt::Assert {
@@ -378,6 +482,7 @@ impl Runtime {
                     label,
                     rid,
                     &BuiltinExecutor,
+                    &self.trust_roots,
                 )?;
                 self.claim_labels.insert(label.to_string(), out);
                 Ok(())
@@ -416,16 +521,33 @@ impl Runtime {
                 Ok(())
             }
             Stmt::Discharge { obligation, by, .. } => {
-                // Discharge all pending mandatory obligations of the targeted claim.
+                // Discharge every pending obligation of the targeted claim, each
+                // through `Module::discharge`, which enforces `by ∈ E ∪ R` and
+                // records a `Discharge` event. A claim id is no longer accepted
+                // as the discharging authority (spec §6.6).
                 let cid = self.claim(obligation)?;
                 let by_id = self.resolve_discharge_by(by)?;
-                for oid in self.module.claims[&cid].obligations.clone() {
-                    if let Some(o) = self.module.obligations.get_mut(&oid) {
-                        if o.state == ObligationState::Pending {
-                            o.state = ObligationState::Satisfied;
-                            o.discharged_by = Some(by_id.clone());
-                        }
-                    }
+                let pending: Vec<Id> = self
+                    .module
+                    .claims
+                    .get(&cid)
+                    .map(|c| {
+                        c.obligations
+                            .iter()
+                            .filter(|oid| {
+                                self.module
+                                    .obligations
+                                    .get(*oid)
+                                    .map(|o| o.state == ObligationState::Pending)
+                                    .unwrap_or(false)
+                            })
+                            .cloned()
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                for oid in pending {
+                    self.module
+                        .discharge(oid, by_id.clone(), ObligationState::Satisfied)?;
                 }
                 Ok(())
             }
@@ -508,15 +630,14 @@ impl Runtime {
     }
 
     fn resolve_discharge_by(&self, by: &str) -> Result<Id, RuntimeError> {
-        // `by` may reference evidence or a receipt label.
+        // `by` must reference evidence or a receipt: the discharging authority
+        // is a piece of evidence or an authentic receipt, never another claim
+        // (spec §6.6: discharged_by ∈ E ∪ R).
         if let Some(e) = self.evidence_labels.get(by) {
             return Ok(e.clone());
         }
         if let Some(r) = self.receipt_labels.get(by) {
             return Ok(r.clone());
-        }
-        if let Some(c) = self.claim_labels.get(by) {
-            return Ok(c.clone());
         }
         Err(RuntimeError::UnknownLabel(by.to_string()))
     }
@@ -587,7 +708,11 @@ impl Runtime {
             let r = self
                 .preloaded
                 .iter()
-                .find(|r| r.operation == op && r.inputs_hash == inputs_hash && r.verify_integrity())
+                .find(|r| {
+                    r.operation == op
+                        && r.inputs_hash == inputs_hash
+                        && r.verify_integrity(&self.trust_roots)
+                })
                 .ok_or_else(|| RuntimeError::ReplayMissingReceipt(op.to_string()))?;
             r.id.clone()
         } else {
@@ -595,6 +720,14 @@ impl Runtime {
                 return Err(RuntimeError::CapabilityDenied(capability.to_string()));
             }
             let res = self.external.run(op, &input_values, &self.caps)?;
+            // The runtime signs the captured receipt under the trusted secret
+            // for the provider. Without a configured trust root the receipt
+            // cannot be made authentic, so live execution fails closed.
+            let trust = self
+                .trust_roots
+                .iter()
+                .find(|t| t.provider == res.provider)
+                .ok_or_else(|| RuntimeError::UnknownTrustRoot(res.provider.clone()))?;
             self.module.add_receipt(
                 op,
                 "1",
@@ -603,6 +736,7 @@ impl Runtime {
                 inputs_hash.clone(),
                 &res.value,
                 out_ty.clone(),
+                trust,
             )
         };
 
@@ -631,6 +765,7 @@ impl Runtime {
             label,
             Some(rid),
             &BuiltinExecutor,
+            &self.trust_roots,
         )?;
         self.claim_labels.insert(label.to_string(), out);
         Ok(())
@@ -640,9 +775,18 @@ impl Runtime {
 
     /// Scan a context for pairwise contradictions and record first-class
     /// contradiction nodes. Returns the number of contradictions detected.
+    ///
+    /// Scans the context's *full* claim set (its own `local_claims` plus the
+    /// `inherited_claims` it received from ancestors) so inherited claims
+    /// participate in contradiction detection.
     pub fn detect_contradictions(&mut self, ctx_label: &str) -> Result<usize, RuntimeError> {
         let ctx = self.context(ctx_label)?;
-        let claim_ids: Vec<Id> = self.module.contexts[&ctx].local_claims.clone();
+        let mut claim_ids: Vec<Id> = self.module.contexts[&ctx].local_claims.clone();
+        for i in &self.module.contexts[&ctx].inherited_claims {
+            if !claim_ids.contains(i) {
+                claim_ids.push(i.clone());
+            }
+        }
         let mut detected = 0;
         for i in 0..claim_ids.len() {
             for j in (i + 1)..claim_ids.len() {
@@ -662,6 +806,14 @@ impl Runtime {
         Ok(detected)
     }
 
+    /// Classify a pairwise contradiction. Implements the automatically
+    /// detectable kinds: proposition negation, incompatible equality (same
+    /// label, different value), disjoint intervals, incompatible units (same
+    /// magnitude, different unit), violated postcondition (a failed obligation
+    /// targets either claim), and assumption conflict (two assumptions with the
+    /// same scope but different values). The remaining kinds
+    /// (mutually-exclusive membership, evidence conflict) are raised explicitly
+    /// via `contradict` statements.
     fn classify_contradiction(
         &self,
         a: &Id,
@@ -671,6 +823,70 @@ impl Runtime {
         let cb = &self.module.claims[b];
         use axiom_core::ContradictionKind;
         use axiom_types::Value;
+
+        // Violated postcondition: either claim carries a Failed obligation.
+        for c in [ca, cb] {
+            for oid in &c.obligations {
+                if let Some(o) = self.module.obligations.get(oid) {
+                    if o.state == ObligationState::Failed {
+                        return Some((
+                            ContradictionKind::ViolatedPostcondition,
+                            format!("obligation {} failed on {}", o.id, c.label),
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Assumption conflict: two assumptions sharing a scope but with
+        // different values.
+        let scopes_a: Vec<(String, Value)> = ca
+            .assumptions
+            .iter()
+            .filter_map(|aid| self.module.assumptions.get(aid))
+            .map(|asum| {
+                let v = self
+                    .module
+                    .claims
+                    .get(&asum.claim)
+                    .map(|c| c.value.clone())
+                    .unwrap_or(Value::Bool(false));
+                (asum.scope.clone(), v)
+            })
+            .collect();
+        let scopes_b: Vec<(String, Value)> = cb
+            .assumptions
+            .iter()
+            .filter_map(|aid| self.module.assumptions.get(aid))
+            .map(|asum| {
+                let v = self
+                    .module
+                    .claims
+                    .get(&asum.claim)
+                    .map(|c| c.value.clone())
+                    .unwrap_or(Value::Bool(false));
+                (asum.scope.clone(), v)
+            })
+            .collect();
+        for (sa, va) in &scopes_a {
+            for (sb, vb) in &scopes_b {
+                if sa == sb && va != vb {
+                    return Some((
+                        ContradictionKind::AssumptionConflict,
+                        format!("assumptions with scope {sa} disagree: {va:?} vs {vb:?}"),
+                    ));
+                }
+            }
+        }
+
+        // Incompatible equality: same label, different value.
+        if ca.label == cb.label && ca.value != cb.value {
+            return Some((
+                ContradictionKind::IncompatibleEquality,
+                format!("claim {} asserted with two values", ca.label),
+            ));
+        }
+
         match (&ca.value, &cb.value) {
             (Value::Bool(x), Value::Bool(y)) if x != y => Some((
                 ContradictionKind::PropositionNegation,

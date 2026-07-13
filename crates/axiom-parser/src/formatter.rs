@@ -32,6 +32,7 @@ fn fmt_expr(e: &Expr) -> String {
         Expr::Sym(s) => format!("'{}", s),
         Expr::Quantity { value, unit } => format!("q({} \"{}\")", fmt_expr(value), esc(unit)),
         Expr::Interval { lo, hi } => format!("interval({} {})", fmt_expr(lo), fmt_expr(hi)),
+        Expr::RationalLit { num, den } => format!("rat({} {})", num, den),
         Expr::Record(fields) => {
             let inner = fields
                 .iter()
@@ -83,20 +84,29 @@ fn fmt_stmt(s: &Stmt) -> String {
             media,
             content,
             trust,
+            provider,
+            signature,
             ..
         } => {
             let c = content
                 .as_ref()
                 .map(|x| format!(" \"{}\"", esc(x)))
                 .unwrap_or_default();
-            format!(
+            let mut s = format!(
                 "evidence {} \"{}\"{}{} trust={}",
                 label,
                 esc(media),
                 c,
                 "",
                 trust
-            )
+            );
+            if let Some(p) = provider {
+                s.push_str(&format!(" provider=\"{}\"", esc(p)));
+            }
+            if let Some(sig) = signature {
+                s.push_str(&format!(" signature=\"{}\"", esc(sig)));
+            }
+            s
         }
         Stmt::Assert {
             label,

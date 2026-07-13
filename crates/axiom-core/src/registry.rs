@@ -53,7 +53,7 @@ fn arith(a: &Value, b: &Value, kind: &str) -> Result<Value, ExecError> {
                     .checked_mul(*y)
                     .map_err(|e| ExecError::Value(e.to_string())),
                 "div" => x.checked_div(*y).map_err(|_| ExecError::DivZero),
-                _ => unreachable!(),
+                other => return Err(ExecError::Value(format!("unknown arithmetic op {other}"))),
             };
             Ok(Value::Num(r.map_err(|e| ExecError::Value(e.to_string()))?))
         }
@@ -61,9 +61,9 @@ fn arith(a: &Value, b: &Value, kind: &str) -> Result<Value, ExecError> {
             let r = match kind {
                 "add" => x.add(y).map_err(|e| ExecError::Unit(e.to_string())),
                 "sub" => x.sub(y).map_err(|e| ExecError::Unit(e.to_string())),
-                "mul" => Ok(x.mul(y)),
+                "mul" => x.mul(y).map_err(|e| ExecError::Unit(e.to_string())),
                 "div" => x.div(y).map_err(|e| ExecError::Unit(e.to_string())),
-                _ => unreachable!(),
+                other => return Err(ExecError::Unit(format!("unknown quantity op {other}"))),
             };
             Ok(Value::Quantity(r?))
         }
@@ -90,7 +90,7 @@ fn compare(a: &Value, b: &Value, kind: &str) -> Result<Value, ExecError> {
         "le" => ord != std::cmp::Ordering::Greater,
         "gt" => ord == std::cmp::Ordering::Greater,
         "ge" => ord != std::cmp::Ordering::Less,
-        _ => unreachable!(),
+        other => return Err(ExecError::Value(format!("unknown comparison op {other}"))),
     };
     Ok(Value::Bool(res))
 }
@@ -173,6 +173,11 @@ pub fn builtin_operations() -> Vec<OperationDef> {
         output: Type::Rational,
         determinism: DeterminismClass::Deterministic,
         uncertainty_rule: UncertaintyRule::ConjoinInputs,
+        // Division carries a mandatory, non-auto-satisfied numeric-bounds proof
+        // obligation (division-by-zero / range). It is the canonical example of
+        // a *risky* pure op: a bare `verify` MUST be quarantined until the
+        // obligation is explicitly discharged (spec §6.6). This is what makes
+        // obligation-gated verification fundamental rather than decorative.
         generates: vec![ObligationKind::TypeCompat, ObligationKind::NumericBounds],
         capabilities: vec![],
     });
@@ -208,7 +213,6 @@ pub fn builtin_operations() -> Vec<OperationDef> {
             vec![
                 ObligationKind::TypeCompat,
                 ObligationKind::DimensionalConsistency,
-                ObligationKind::NumericBounds,
             ],
         ),
     ] {
@@ -253,7 +257,7 @@ pub fn builtin_operations() -> Vec<OperationDef> {
         output: Type::NumericInterval,
         determinism: DeterminismClass::Deterministic,
         uncertainty_rule: UncertaintyRule::Exact,
-        generates: vec![ObligationKind::TypeCompat, ObligationKind::NumericBounds],
+        generates: vec![ObligationKind::TypeCompat],
         capabilities: vec![],
     });
     // Logical not.

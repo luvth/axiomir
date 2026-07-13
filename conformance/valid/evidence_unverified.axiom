@@ -1,0 +1,4 @@
+module evidence_unverified "1"
+evidence raw "text/plain" "raw sensor reading" trust=unverified
+observe t = 1 : rational evidence [raw]
+assert ok = 2 : rational
