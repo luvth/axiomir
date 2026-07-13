@@ -1,7 +1,7 @@
 # Axiom IR
 
-![Tests](https://img.shields.io/badge/tests-93%2F93-passing-brightgreen)
-![Conformance](https://img.shields.io/badge/conformance-17%2F17-passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-93%2F93-brightgreen)
+![Conformance](https://img.shields.io/badge/conformance-17%2F17-brightgreen)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![Release](https://img.shields.io/badge/release-v0.2.0-blue)
 
